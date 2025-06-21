@@ -503,15 +503,9 @@ sameboy_game_boy_core_set_model (HsGameBoyCore *core, HsGameBoyModel model)
 }
 
 static void
-sameboy_game_boy_core_set_palette (HsGameBoyCore *core, int *colors, int n_colors)
-{
-}
-
-static void
 sameboy_game_boy_core_init (HsGameBoyCoreInterface *iface)
 {
   iface->set_model = sameboy_game_boy_core_set_model;
-  iface->set_palette = sameboy_game_boy_core_set_palette;
 }
 
 GType
