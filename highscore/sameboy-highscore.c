@@ -178,8 +178,10 @@ load_save (SameBoyCore *self, GError **error)
     return FALSE;
 
   g_autoptr (GFile) save_dir = g_file_new_for_path (self->save_location);
-  if (!g_file_query_exists (save_dir, NULL) && g_file_make_directory_with_parents (save_dir, NULL, error))
+  if (!g_file_query_exists (save_dir, NULL) &&
+      !g_file_make_directory_with_parents (save_dir, NULL, error)) {
     return FALSE;
+  }
 
   g_autoptr (GFile) save_file = g_file_get_child (save_dir, "save.sav");
   GB_load_battery (self->gameboy, g_file_peek_path (save_file));
