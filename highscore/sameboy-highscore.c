@@ -35,8 +35,11 @@ static void
 log_cb (GB_gameboy_t *gb, const char *string, GB_log_attributes_t attributes)
 {
   SameBoyCore *self = GB_get_user_data (gb);
+  g_autofree char *stripped = g_strdup (string);
 
-  hs_core_log_literal (HS_CORE (self), HS_LOG_DEBUG, string);
+  stripped = g_strstrip (stripped);
+
+  hs_core_log_literal (HS_CORE (self), HS_LOG_DEBUG, stripped);
 }
 
 static void
