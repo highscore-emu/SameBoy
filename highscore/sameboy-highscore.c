@@ -270,7 +270,8 @@ sameboy_core_run_frame (HsCore *core)
 
   if (self->frame_updated) {
     int buf_size = GB_get_screen_width (self->gameboy) * GB_get_screen_height (self->gameboy) * sizeof (guint32);
-    memcpy (hs_software_context_get_framebuffer (self->context), self->frame_buffer, buf_size);
+    memcpy (hs_software_context_acquire_framebuffer (self->context), self->frame_buffer, buf_size);
+    hs_software_context_release_framebuffer (self->context);
     hs_software_context_set_colorburst_phase (self->context, self->colorburst_phase);
 
     if (hs_core_get_region (core) == HS_REGION_NTSC)
