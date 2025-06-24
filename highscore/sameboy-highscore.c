@@ -187,8 +187,11 @@ load_save (SameBoyCore *self, GError **error)
   }
 
   g_autoptr (GFile) save_file = g_file_get_child (save_dir, "save.sav");
-  int err = GB_load_battery (self->gameboy, g_file_peek_path (save_file));
 
+  if (!g_file_query_exists (save_file, NULL))
+    return TRUE;
+
+  int err = GB_load_battery (self->gameboy, g_file_peek_path (save_file));
   if (err > 0) {
     g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (err),
                  "Failed to load battery: %s", g_strerror (err));
