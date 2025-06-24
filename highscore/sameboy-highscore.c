@@ -187,8 +187,15 @@ load_save (SameBoyCore *self, GError **error)
   }
 
   g_autoptr (GFile) save_file = g_file_get_child (save_dir, "save.sav");
-  GB_load_battery (self->gameboy, g_file_peek_path (save_file));
-  return true;
+  int err = GB_load_battery (self->gameboy, g_file_peek_path (save_file));
+
+  if (err > 0) {
+    g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (err),
+                 "Failed to load battery: %s", g_strerror (err));
+    return FALSE;
+  }
+
+  return TRUE;
 }
 
 static gboolean
@@ -342,8 +349,14 @@ sameboy_core_sync_save (HsCore  *core,
 {
   SameBoyCore *self = SAMEBOY_CORE (core);
   g_autoptr (GFile) save_dir = g_file_new_for_path (self->save_location);
+  g_autoptr (GFile) save_file = g_file_get_child (save_dir, "save.sav");
 
-  GB_save_battery (self->gameboy, g_file_peek_path (save_dir));
+  int err = GB_save_battery (self->gameboy, g_file_peek_path (save_file));
+  if (err > 0) {
+    g_set_error (error, G_FILE_ERROR, g_file_error_from_errno (err),
+                 "Failed to save battery: %s", g_strerror (err));
+    return FALSE;
+  }
 
   return TRUE;
 }
