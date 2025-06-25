@@ -298,8 +298,8 @@ sameboy_core_run_frame (HsCore *core)
   }
 }
 
-static void
-sameboy_core_reset (HsCore *core, gboolean hard)
+static gboolean
+sameboy_core_reset (HsCore *core, gboolean hard, GError **error)
 {
   SameBoyCore *self = SAMEBOY_CORE (core);
 
@@ -308,14 +308,15 @@ sameboy_core_reset (HsCore *core, gboolean hard)
       self->model = self->pending_model;
       GB_switch_model_and_reset (self->gameboy, self->model);
       update_framebuffer (self);
-      return;
+      return TRUE;
     }
 
     GB_reset (self->gameboy);
-    return;
+    return TRUE;
   }
 
   GB_quick_reset (self->gameboy);
+  return TRUE;
 }
 
 static void
@@ -372,8 +373,10 @@ sameboy_core_load_state (HsCore          *core,
   SameBoyCore *self = SAMEBOY_CORE (core);
   GError *error = NULL;
 
-  if (self->pending_model != self->model)
-    hs_core_reset (core, TRUE);
+  if (self->pending_model != self->model && !hs_core_reset (core, TRUE, &error)) {
+    callback (core, &error);
+    return;
+  }
 
   if (GB_load_state (self->gameboy, path)) {
     g_set_error (&error, HS_CORE_ERROR, HS_CORE_ERROR_INTERNAL, "Failed to load state");
