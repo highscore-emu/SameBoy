@@ -2,7 +2,7 @@
 Name=SameBoy
 Version=@version@
 Commit=@commit@
-Module=sameboy/sameboy-highscore.so
+Module=sameboy-highscore.so
 Authors=Lior Halphon;
 Copyright=Copyright © Lior Halphon 2015–2025;
 Website=https://sameboy.github.io/
