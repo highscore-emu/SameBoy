@@ -7,8 +7,8 @@ commit = run_command('git', 'describe', '--always', '--dirty', '--match', '').st
 
 cc = meson.get_compiler('c')
 
-cores_dir = get_option('prefix') / get_option('libdir') / 'highscore' / 'cores'
-cores_dir_sameboy = cores_dir / 'sameboy'
+libdir = get_option('prefix') / get_option('libdir')
+core_dir = libdir / 'highscore' / 'cores' / 'sameboy'
 
 rgbasm = find_program('rgbasm')
 rgblink = find_program('rgblink')
@@ -25,7 +25,7 @@ add_project_arguments([
   '-DGB_INTERNAL',
   '-DGB_VERSION="@0@"'.format(version),
   '-DGIT_VERSION=" @0@"'.format(commit),
-  '-DCORE_DIR="@0@"'.format(cores_dir_sameboy),
+  '-DCORE_DIR="@0@"'.format(core_dir),
   '-Wno-missing-braces',
   '-Wno-multichar',
 ], language: 'c')
@@ -72,7 +72,7 @@ foreach boot_rom : sameboy_boot_roms
     output: boot_rom_name,
     command: [ rgblink, '-x', '-o', '@OUTPUT@', '@INPUT@' ],
     install: true,
-    install_dir: cores_dir_sameboy
+    install_dir: core_dir
   )
 endforeach
 
@@ -111,7 +111,7 @@ shared_library('sameboy-highscore',
   dependencies : sameboy_deps,
   name_prefix: '',
   include_directories: sameboy_include_dirs,
-  install_dir : cores_dir_sameboy,
+  install_dir : core_dir,
   install : true,
 )
 
@@ -122,6 +122,6 @@ configure_file(
   input: 'sameboy.highscore.in',
   output: 'sameboy.highscore',
   configuration: descriptor,
-  install_dir: cores_dir,
+  install_dir: core_dir,
   install: true
 )
