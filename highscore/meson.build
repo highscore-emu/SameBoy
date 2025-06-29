@@ -7,14 +7,15 @@ commit = run_command('git', 'describe', '--always', '--dirty', '--match', '').st
 
 cc = meson.get_compiler('c')
 
-libdir = get_option('prefix') / get_option('libdir')
-core_dir = libdir / 'highscore' / 'cores' / 'sameboy'
+core_dir = get_option('core_install_dir')
+if core_dir == ''
+  libdir = get_option('prefix') / get_option('libdir')
+  core_dir = libdir / 'highscore' / 'cores' / 'sameboy'
+endif
 
 rgbasm = find_program('rgbasm')
 rgblink = find_program('rgblink')
 rgbgfx = find_program('rgbgfx')
-
-# git_version = run_command('git', 'rev-parse', '--short', 'HEAD').stdout().strip()
 
 add_project_arguments([
   '-fvisibility=hidden',
