@@ -6,5 +6,5 @@ Module=sameboy-highscore.so
 Authors=Lior Halphon;
 Copyright=Copyright © Lior Halphon 2015–2025;
 Website=https://sameboy.github.io/
-License=MIT
+LicensePath=sameboy.license
 Platforms=GameBoy;
