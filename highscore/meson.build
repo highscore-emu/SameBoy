@@ -126,3 +126,7 @@ configure_file(
   install_dir: core_dir,
   install: true
 )
+
+install_data('sameboy.license',
+  install_dir: core_dir
+)
