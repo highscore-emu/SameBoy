@@ -1,5 +1,5 @@
 project('sameboy-highscore', ['c', 'cpp'],
-  version : '1.0.1',
+  version : '1.0.2',
 )
 
 version = meson.project_version()
