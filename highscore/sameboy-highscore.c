@@ -1,6 +1,8 @@
-#include "sameboy-highscore.h"
-
 #include <gb.h>
+
+#undef unreachable
+
+#include "sameboy-highscore.h"
 
 #define SAMPLE_RATE 96000
 #define AUDIO_BUF_SIZE 8000
