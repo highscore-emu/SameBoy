@@ -7,4 +7,4 @@ Authors=Lior Halphon;
 Copyright=Copyright © Lior Halphon 2015–2025;
 Website=https://sameboy.github.io/
 LicensePath=sameboy.license
-Platforms=GameBoy;
+Platforms=GameBoy;GameBoyColor;
