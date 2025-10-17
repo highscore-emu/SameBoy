@@ -29,9 +29,11 @@ struct _SameBoyCore
 };
 
 static void sameboy_game_boy_core_init (HsGameBoyCoreInterface *iface);
+static void sameboy_game_boy_color_core_init (HsGameBoyColorCoreInterface *iface);
 
 G_DEFINE_FINAL_TYPE_WITH_CODE (SameBoyCore, sameboy_core, HS_TYPE_CORE,
-                               G_IMPLEMENT_INTERFACE (HS_TYPE_GAME_BOY_CORE, sameboy_game_boy_core_init));
+                               G_IMPLEMENT_INTERFACE (HS_TYPE_GAME_BOY_CORE, sameboy_game_boy_core_init)
+                               G_IMPLEMENT_INTERFACE (HS_TYPE_GAME_BOY_COLOR_CORE, sameboy_game_boy_color_core_init));
 
 static void
 log_cb (GB_gameboy_t *gb, const char *string, GB_log_attributes_t attributes)
@@ -533,6 +535,11 @@ static void
 sameboy_game_boy_core_init (HsGameBoyCoreInterface *iface)
 {
   iface->set_model = sameboy_game_boy_core_set_model;
+}
+
+static void
+sameboy_game_boy_color_core_init (HsGameBoyColorCoreInterface *iface)
+{
 }
 
 GType
