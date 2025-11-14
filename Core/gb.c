@@ -58,6 +58,13 @@ static char *default_input_callback(GB_gameboy_t *gb)
 
     if (getline(&expression, &size, stdin) == -1) {
         /* The user doesn't have STDIN or used ^D. We make sure the program keeps running. */
+        
+        /* Some implementations may allocate expressions even on getline failure,
+           and other implementations may crash on free(NULL). Free expression if
+           it was allocated. */
+        if (expression) {
+            free(expression);
+        }
         GB_set_async_input_callback(gb, NULL); /* Disable async input */
         return strdup("c");
     }
@@ -1092,7 +1099,7 @@ int GB_load_battery(GB_gameboy_t *gb, const char *path)
             /* We must reset RTC here, or it will not advance. */
             goto reset_rtc;
         }
-        return 0;
+        goto exit;
     }
     
     if (gb->cartridge_type->mbc_type == GB_HUC3) {
@@ -1111,7 +1118,7 @@ int GB_load_battery(GB_gameboy_t *gb, const char *path)
             /* We must reset RTC here, or it will not advance. */
             goto reset_rtc;
         }
-        return 0;
+        goto exit;
     }
 
     rtc_save_t rtc_save;
