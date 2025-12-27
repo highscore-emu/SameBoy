@@ -1,9 +1,10 @@
 project('sameboy-highscore', ['c', 'cpp'],
   version : '1.0.2',
+  default_options: ['c_std=gnu11']
 )
 
 version = meson.project_version()
-commit = run_command('git', 'describe', '--always', '--dirty', '--match', '').stdout().strip()
+commit = run_command('git', 'describe', '--always', '--dirty', '--match', '', check: false).stdout().strip()
 
 cc = meson.get_compiler('c')
 
