@@ -30,6 +30,7 @@ add_project_arguments([
   '-DCORE_DIR="@0@"'.format(core_dir),
   '-Wno-missing-braces',
   '-Wno-multichar',
+  '-Wno-unused-result',
 ], language: 'c')
 
 pb12 = executable('pb12',
