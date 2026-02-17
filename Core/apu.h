@@ -157,7 +157,7 @@ typedef struct
     bool noise_counter_active;
     bool noise_background_counter_active;
     bool lfsr_stepped_in_narrow;
-    bool lfsr_bit_7_before_step; // Used by some corrputions?
+    bool lfsr_bit_7_before_step; // Used by some corruptions?
 } GB_apu_t;
 
 typedef enum {

@@ -1248,13 +1248,18 @@ static void prepare_noise_start(GB_gameboy_t *gb)
             divisor = 8;
         }
         else if (divisor == 1) {
-            /* TODO: I'm not 100% sure this only affects NR43 = 1X */
-            if ((gb->io_registers[GB_IO_NR43] & 0xf0) == 0x10 && (gb->apu.noise_channel.counter & 1)) {
-                instant_step = true;
-            }
-            /* TODO: needs further research, the conditions are very odd. What if NR43 changes before stepping? */
-            if ((gb->io_registers[GB_IO_NR43] & 0xf0) == 0x10 && !gb->apu.noise_channel.did_step_counter) {
+            if (!gb->apu.noise_channel.did_step_counter) {
                 div_1_glitch = true;
+            }
+            
+            uint16_t mask = 1 << (gb->io_registers[GB_IO_NR43] >> 4);
+            bool old_bit = gb->apu.noise_channel.counter & mask;
+            gb->apu.noise_channel.counter++;
+            gb->apu.noise_channel.counter &= 0x3FFF;
+            bool new_bit = gb->apu.noise_channel.counter & mask;
+            
+            if ((new_bit && !old_bit)) {
+                instant_step = true;
             }
         }
     }
@@ -1312,7 +1317,7 @@ static void prepare_noise_start(GB_gameboy_t *gb)
     }
     
     /* TODO: This is weird, is the clock going out of sync? */
-    if (!divisor && gb->model <= GB_MODEL_CGB_C && was_background_counting && !gb->apu.is_active[GB_NOISE]) {
+    if (!divisor && gb->model <= GB_MODEL_CGB_C && was_background_counting && !gb->apu.is_active[GB_NOISE] && gb->cgb_double_speed) {
         gb->apu.noise_channel.counter_countdown--;
     }
     if (div_1_glitch) {
@@ -1347,7 +1352,11 @@ static void nr43_write(GB_gameboy_t *gb, uint8_t new)
         TODO: Non-determinism aside, this is currently only 100% accurate in CGB-E mode, where
         my specific CGB-E is currently emulated.  My CGB-D, under rare cases, samples a second
         intermediate value,  and this is not  currently emulated.  AGB revisions are extremely
-        glitchy, and are hard to research. Pre-CGB-D revisions are WIP.
+        glitchy, and are hard to research.
+     
+        Due to FF-write glitches in pre-CGB-D revisions, all writes (even no-change writes) go
+        through 3 intermediate values by definition. Also, the effective counter value used is
+        ORed with the next (or previous, timing needs to be verified) value.
     */
     bool old_narrow = gb->apu.noise_channel.narrow;
     gb->apu.noise_channel.narrow = new & 8;
@@ -1356,11 +1365,15 @@ static void nr43_write(GB_gameboy_t *gb, uint8_t new)
     
     if ((old & 0xF0) == (new & 0xF0)) return;
     
-    bool old_bit = (gb->apu.noise_channel.counter >> (old >> 4)) & 1;
+    uint16_t effective_counter = gb->apu.noise_channel.counter;
+    if (gb->model <= GB_MODEL_CGB_C && gb->apu.noise_channel.countdown_reloaded) {
+        effective_counter |= (effective_counter - 1) & 0x3FFF;
+    }
+    bool old_bit = (effective_counter >> (old >> 4)) & 1;
 
     uint8_t glitch_value = (old & 0x7F) | (new & 0x80);
-    bool glitch_bit = (gb->apu.noise_channel.counter >> (glitch_value >> 4)) & 1;
-    bool new_bit = (gb->apu.noise_channel.counter >> (new >> 4)) & 1;
+    bool glitch_bit = (effective_counter >> (glitch_value >> 4)) & 1;
+    bool new_bit = (effective_counter >> (new >> 4)) & 1;
     bool force_glitch = false;
 
     if (gb->model == GB_MODEL_CGB_D) {
@@ -1630,8 +1643,21 @@ static void nr43_write(GB_gameboy_t *gb, uint8_t new)
             gb->apu.noise_channel.narrow = true;
             step_lfsr(gb, 0);
             gb->apu.noise_channel.narrow = previous_narrow;
+            if ((new & 0xf0) <= 0x20 && glitch_bit && !(effective_counter & 8)) { // No clue why that specific bit is tested
+                // Non-deterministic, not fully tested for revision differences and wide mode
+                // Step twice?
+                step_lfsr(gb, 0);
+                gb->apu.noise_channel.lfsr &= ~(gb->apu.noise_channel.narrow? 0x4040 : 0x4000);
+                gb->apu.noise_channel.lfsr |= (gb->apu.noise_channel.lfsr & (gb->apu.noise_channel.narrow? 0x2020 : 0x2000)) << 1;
+            }
         }
         else {
+            step_lfsr(gb, 0);
+        }
+    }
+    else if (gb->model <= GB_MODEL_CGB_C) {
+        if ((new & 0xf0) <= 0x20 && !glitch_bit && !new_bit && !old_bit && (effective_counter & 8)) { // No clue why that specific bit is tested
+            // Step twice?
             step_lfsr(gb, 0);
         }
     }
@@ -2036,6 +2062,25 @@ void GB_apu_write(GB_gameboy_t *gb, uint8_t reg, uint8_t value)
                     gb->apu.noise_channel.counter_countdown =
                     divisor + (divisor == 2? 0 : inline_const(uint8_t[], {2, 1, 4, 3})[(gb->apu.noise_channel.alignment) & 3]);
                 }
+            }
+            if (gb->model <= GB_MODEL_CGB_C) {
+                /* TODO: CGB≤C (and DMG) have various unemulated quirks when you write to NR43 just as the counter reloads */
+                if (gb->apu.noise_channel.countdown_reloaded) {
+                    bool old_bit = (gb->apu.noise_channel.counter >> (gb->io_registers[GB_IO_NR43] >> 4)) & 1;
+                    bool glitch_bit = (gb->apu.noise_channel.counter >> 7) & 1;
+                    bool new_bit = (gb->apu.noise_channel.counter >> (value >> 4)) & 1;
+                    
+                    if (!old_bit && new_bit && glitch_bit) {
+                        uint16_t previous_counter = (gb->apu.noise_channel.counter - 1) & 0x3FFF;
+                        bool old_bit = (previous_counter >> (gb->io_registers[GB_IO_NR43] >> 4)) & 1;
+                        bool glitch_bit = (previous_counter >> 7) & 1;
+                        bool new_bit = (previous_counter >> (value >> 4)) & 1;
+                        if (old_bit && !new_bit && glitch_bit) {
+                            step_lfsr(gb, 0);
+                        }
+                    }
+                }
+                nr43_write(gb, 0xff);
             }
             nr43_write(gb, value);
             
