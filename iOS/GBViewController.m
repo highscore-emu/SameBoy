@@ -16,6 +16,9 @@
 #import "GBCheckableAlertController.h"
 #import "GBPrinterFeedController.h"
 #import "GBCheatsController.h"
+#import "UILabel+LockFonts.h"
+#import <CommonCrypto/CommonCrypto.h>
+#include <sys/xattr.h>
 #import "GCControllerGetElements.h"
 #import "GBZipReader.h"
 #import <sys/stat.h>
@@ -79,7 +82,6 @@ static UIImage *CreateMenuImage(NSString *name)
         [source drawInRect:destRect];
     }];
     return [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-
 }
 
 API_AVAILABLE(ios(13.0))
@@ -336,7 +338,7 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
         _printerSpinner.color = theme.buttonColor;
 
         [self willRotateToInterfaceOrientation:[UIApplication sharedApplication].statusBarOrientation
-                                          duration:0];
+                                      duration:0];
         [_backgroundView reloadThemeImages];
         
         [self setNeedsStatusBarAppearanceUpdate];
@@ -434,8 +436,8 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
         // Configure the change camera button stacked on top of the camera position button
         _changeCameraButton = [[UIButton alloc] init];
         [_changeCameraButton  setImage:[UIImage systemImageNamed:@"camera.aperture"
-                                                withConfiguration:[UIImageSymbolConfiguration configurationWithScale:UIImageSymbolScaleLarge]]
-                                forState:UIControlStateNormal];
+                                               withConfiguration:[UIImageSymbolConfiguration configurationWithScale:UIImageSymbolScaleLarge]]
+                              forState:UIControlStateNormal];
         _changeCameraButton.backgroundColor = [UIColor systemBackgroundColor];
         _changeCameraButton.layer.cornerRadius = 6;
         _changeCameraButton.alpha = 0;
@@ -502,7 +504,7 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     else {
         UIImage *rotateImage = [[UIImage imageNamed:@"PrinterTemplate"] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
         [_printerButton setImage:rotateImage
-                               forState:UIControlStateNormal];
+                        forState:UIControlStateNormal];
         _printerButton.backgroundColor = [UIColor whiteColor];
     }
     
@@ -515,7 +517,6 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     
     [_backgroundView addSubview:_printerButton];
     [_backgroundView addSubview:_printerSpinner];
-
     
     [self updateMirrorWindow];
     
@@ -1284,7 +1285,6 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     if (_orientation == UIInterfaceOrientationPortrait || _orientation == UIInterfaceOrientationPortraitUpsideDown) {
         landscape = false;
     }
-        
     
     _cameraPositionButton.frame = CGRectMake(insets.left + 8,
                                              _backgroundView.bounds.size.height - 8 - insets.bottom - 32,
@@ -1354,7 +1354,6 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     }
     return (_verticalLayout.theme.isDark || _backgroundView.fullScreenMode)? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
 }
-
 
 - (void)preRun
 {
@@ -1450,8 +1449,226 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     }
 }
 
+- (NSString *)formatDate:(NSDate *)date
+{
+    
+    NSCalendar *calendar = [NSCalendar currentCalendar];
+    NSDate *now = [NSDate date];
+    
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.locale = [NSLocale currentLocale];
+    formatter.timeZone = [NSTimeZone localTimeZone];
+    formatter.dateStyle = NSDateFormatterNoStyle;
+    formatter.timeStyle = NSDateFormatterMediumStyle;
+    NSString *time = [formatter stringFromDate:date];
+    
+    if ([calendar isDate:date inSameDayAsDate:now]) {
+        return time;
+    }
+    
+    if ([calendar component:NSCalendarUnitYear fromDate:date] == [calendar component:NSCalendarUnitYear fromDate:now]) {
+        formatter.dateFormat = [NSDateFormatter dateFormatFromTemplate:@"MMM d"
+                                                               options:0
+                                                                locale:formatter.locale];
+        return [[formatter stringFromDate:date] stringByAppendingFormat:@", %@", time];
+    }
+    
+    formatter.dateFormat = [NSDateFormatter dateFormatFromTemplate:@"MMM d yyyy"
+                                                           options:0
+                                                            locale:formatter.locale];
+    return [[formatter stringFromDate:date] stringByAppendingFormat:@", %@", time];
+}
+
+- (NSData *)batteryHash
+{
+    NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:[GBROMManager sharedManager].batterySaveFile];
+    if (!file) return nil;
+    
+    CC_SHA256_CTX ctx;
+    CC_SHA256_Init(&ctx);
+    
+    while (true) {
+        @autoreleasepool {
+            NSData *chunk = [file readDataOfLength:0x4000];
+            if (chunk.length == 0) break;
+            CC_SHA256_Update(&ctx, chunk.bytes, (CC_LONG)chunk.length);
+        }
+    }
+    [file closeFile];
+    
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256_Final(digest, &ctx);
+    
+    return [NSData dataWithBytes:digest length:CC_SHA256_DIGEST_LENGTH];
+}
+
+- (bool)areSavesInSync
+{
+    if (!GBROMManager.sharedManager.currentROM) return true; // No ROM
+    NSString *saveState = [[GBROMManager sharedManager] autosaveStateFile];
+    NSString *batterySave = [[GBROMManager sharedManager] batterySaveFile];
+    
+    // There can't be a mismatch if one of the files is missing
+    if (access(saveState.UTF8String, F_OK) || access(batterySave.UTF8String, F_OK)) return true;
+    
+    uint8_t savedHash[CC_SHA256_DIGEST_LENGTH];
+    if (getxattr(saveState.UTF8String, "battery-hash", &savedHash, sizeof(savedHash), 0, 0) == sizeof(savedHash)) {
+        NSData *computedHash = [self batteryHash];
+        if (computedHash && memcmp(savedHash, computedHash.bytes, sizeof(savedHash)) == 0) {
+            return true; // Battery didn't change
+        }
+    }
+    
+    GB_gameboy_t *gb = NULL;
+    GB_model_t model;
+    if (GB_get_state_model(saveState.UTF8String, &model)) {
+        return true; // Not a valid state, ignore
+    }
+    gb = GB_init(GB_alloc(), model);
+    NSString *romFile = [[GBROMManager sharedManager] romFile];
+    if ([romFile.pathExtension.lowercaseString isEqualToString:@"isx"]) {
+        if (GB_load_isx(gb, romFile.fileSystemRepresentation)) {
+            // Can't load ROM
+            GB_dealloc(gb);
+            return true;
+        }
+    }
+    else {
+        if (GB_load_rom(gb, romFile.fileSystemRepresentation)) {
+            // Can't load ROM
+            GB_dealloc(gb);
+            return true;
+        }
+    }
+    if (GB_load_state(gb, saveState.UTF8String)) {
+        // Not a valid state again, ignore
+        GB_dealloc(gb);
+        return true;
+    }
+    
+    size_t ramSize = 0;
+    const uint8_t *ram = GB_get_direct_access(gb, GB_DIRECT_ACCESS_CART_RAM, &ramSize, NULL);
+    uint8_t *ramCopy = malloc(ramSize);
+    memcpy(ramCopy, ram, ramSize);
+    
+    GB_load_battery(gb, batterySave.UTF8String);
+    ram = GB_get_direct_access(gb, GB_DIRECT_ACCESS_CART_RAM, &ramSize, NULL);
+    bool matching = memcmp(ram, ramCopy, ramSize) == 0;
+    free(ramCopy);
+    GB_dealloc(gb);
+    return matching;
+}
+
+- (bool)verifySavesInSync
+{
+    if ([self areSavesInSync]) return true; // Saves are in sync
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    __block bool ret = false;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Save Conflict Detected"
+                                                                       message:[NSString stringWithFormat: @"“%@” has both an automatic save state and a conflicting battery save file. The battery save may have newer progress that isn’t in the save state. Which one would you like to keep?", [GBROMManager sharedManager].currentROM.lastPathComponent]
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        
+        NSString *saveState = [[GBROMManager sharedManager] autosaveStateFile];
+        NSString *batterySave = [[GBROMManager sharedManager] batterySaveFile];
+        
+        NSDate *date;
+        [[NSURL fileURLWithPath:saveState] getResourceValue:&date
+                                                     forKey:NSURLContentModificationDateKey
+                                                      error:nil];
+        
+        NSString *stateDateString = [self formatDate:date];
+        
+        UIAlertAction *stateAction = [UIAlertAction actionWithTitle:@"Save State\n"
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:^(UIAlertAction *action) {
+            unlink(batterySave.UTF8String);
+            ret = true;
+            dispatch_semaphore_signal(sem);
+        }];
+
+        [[NSURL fileURLWithPath:batterySave] getResourceValue:&date
+                                                       forKey:NSURLContentModificationDateKey
+                                                        error:nil];
+        
+        NSString *batteryDateString = [self formatDate:date];
+        
+        UIAlertAction *batteryAction = [UIAlertAction actionWithTitle:@"Battery Save\n"
+                                                                style:UIAlertActionStyleDefault
+                                                              handler:^(UIAlertAction *action) {
+            unlink(saveState.UTF8String);
+            ret = true;
+            dispatch_semaphore_signal(sem);
+        }];
+        [alert addAction:stateAction];
+        [alert addAction:batteryAction];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Close ROM"
+                                                  style:UIAlertActionStyleCancel
+                                                handler:^(UIAlertAction *action) {
+            ret = false;
+            dispatch_semaphore_signal(sem);
+        }]];
+        
+        // hack
+        _running = false;
+        [self presentViewController:alert animated:true completion:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSMutableSet<UIView *> *views = [NSMutableSet setWithObject:alert.view];
+            
+            UIColor *secondaryLabelColor;
+            if (@available(iOS 13.0, *)) {
+                secondaryLabelColor = [UIColor secondaryLabelColor];
+            }
+            else {
+                secondaryLabelColor = [UIColor systemGrayColor];
+            }
+            
+            UILabel *view;
+            while ((view = (UILabel *)views.anyObject)) {
+                [views removeObject:view];
+                [views addObjectsFromArray:view.subviews];
+                if ([view isKindOfClass:[UILabel class]]) {
+                    if ([view.text isEqualToString:stateAction.title]) {
+                        NSMutableAttributedString *text = [view.attributedText mutableCopy];
+                        [text appendAttributedString:[[NSAttributedString alloc] initWithString:stateDateString
+                                                                                     attributes:@{
+                            NSFontAttributeName: [UIFont systemFontOfSize:UIFont.smallSystemFontSize],
+                            NSForegroundColorAttributeName: secondaryLabelColor,
+                        }]];
+                        view.attributedText = text;
+                        view.numberOfLines = 2;
+                        view.locksFonts = true;
+                    }
+                    if ([view.text isEqualToString:batteryAction.title]) {
+                        NSMutableAttributedString *text = [view.attributedText mutableCopy];
+                        [text appendAttributedString:[[NSAttributedString alloc] initWithString:batteryDateString
+                                                                                     attributes:@{
+                            NSFontAttributeName: [UIFont systemFontOfSize:UIFont.smallSystemFontSize],
+                            NSForegroundColorAttributeName: secondaryLabelColor,
+                        }]];
+                        view.attributedText = text;
+                        view.numberOfLines = 2;
+                        view.locksFonts = true;
+                    }
+                }
+            }
+        });
+    });
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    _running = true;
+    return ret;
+}
+
 - (void)run
 {
+    if (![self verifySavesInSync]) {
+        _romLoaded = false;
+        _running = false;
+        _stopping = false;
+        GBROMManager.sharedManager.currentROM = nil;
+        return;
+    }
+
     [self loadROM];
     if (!_romLoaded) {
         _running = false;
@@ -1492,9 +1709,8 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
             GB_run(&_gb);
             if (!_autosaveCountdown) {
                 _autosaveCountdown = autosaveFrequency;
-                [self preformAutosave];
+                [self performAutosave];
             }
-
         }
     }
     [self postRun];
@@ -1540,10 +1756,19 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
     return ret;
 }
 
-- (void)preformAutosave
+- (void)performAutosave
 {
     GB_save_battery(&_gb, [GBROMManager sharedManager].batterySaveFile.fileSystemRepresentation);
     [self saveStateToFile:[GBROMManager sharedManager].autosaveStateFile];
+    // Assoicate the battery save with the save state via a hash xattr
+    NSData *batteryHash = [self batteryHash];
+    if (batteryHash) {
+        setxattr([GBROMManager sharedManager].autosaveStateFile.UTF8String, "battery-hash",
+                 batteryHash.bytes, batteryHash.length, 0, 0);
+    }
+    else {
+        removexattr([GBROMManager sharedManager].autosaveStateFile.UTF8String, "battery-hash", 0);
+    }
 }
 
 - (void)postRun
@@ -1556,7 +1781,17 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
     _audioClient = nil;
 
     if (!_swappingROM) {
-        [self preformAutosave];
+        [self performAutosave];
+        
+        // Assoicate the battery save with the save state via a hash xattr
+        NSData *batteryHash = [self batteryHash];
+        if (batteryHash) {
+            setxattr([GBROMManager sharedManager].autosaveStateFile.UTF8String, "battery-hash",
+                     batteryHash.bytes, batteryHash.length, 0, 0);
+        }
+        else {
+            removexattr([GBROMManager sharedManager].autosaveStateFile.UTF8String, "battery-hash", 0);
+        }
 
         NSDate *date;
         [[NSURL fileURLWithPath:[GBROMManager sharedManager].autosaveStateFile] getResourceValue:&date
@@ -1564,7 +1799,6 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
                                                                                            error:nil];
         _saveDate = date;
         _lastSavedROM = [GBROMManager sharedManager].currentROM;
-
     }
     [[GBHapticManager sharedManager] setRumbleStrength:0];
     if (@available(iOS 14.0, *)) {
@@ -1892,7 +2126,6 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
             }
         }];
     });
-
 }
 
 - (BOOL)application:(UIApplication *)app openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options
@@ -2036,8 +2269,8 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
         }
 
         _disableCameraTimer = [NSTimer scheduledTimerWithTimeInterval:1
-                                                             repeats:false
-                                                               block:^(NSTimer *timer) {
+                                                              repeats:false
+                                                                block:^(NSTimer *timer) {
             if (_cameraPositionButton.alpha) {
                 [UIView animateWithDuration:0.25 animations:^{
                     _cameraPositionButton.alpha = 0;
@@ -2204,8 +2437,8 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
     }]];
     menu.selectedAction = menu.actions[_printerConnected];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel"
-                                            style:UIAlertActionStyleCancel
-                                          handler:nil]];
+                                             style:UIAlertActionStyleCancel
+                                           handler:nil]];
     [self presentViewController:menu animated:true completion:nil];
 }
 
