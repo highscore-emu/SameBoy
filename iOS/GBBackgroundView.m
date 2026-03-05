@@ -105,7 +105,7 @@ static GB_key_mask_t angleToKeyMask(double angle)
     NSTimer *_fadeTimer;
     
     GB_key_mask_t _lastMask;
-    bool _fullScreenMode;
+    GBControllerFocus _fullScreenMode;
 }
 
 - (void)reloadThemeImages
@@ -198,7 +198,7 @@ static GB_key_mask_t angleToKeyMask(double angle)
 {
     if (_previewMode) return;
     if (_fullScreenMode) {
-        self.fullScreenMode = false;
+        self.fullScreenMode = GBControllerFocusOff;
         return;
     }
     static const double dpadRadius = 75;
@@ -373,10 +373,10 @@ static GB_key_mask_t angleToKeyMask(double angle)
                 [self rewindSwipe];
             }
             else if (point.y - _screenSwipeOrigin.y > 32) {
-                [self saveSwipe];
+                [self saveSwipeFromController:false];
             }
             else if (point.y - _screenSwipeOrigin.y < -32) {
-                [self loadSwipe];
+                [self loadSwipeFromController:false];
             }
             continue;
         }
@@ -450,6 +450,13 @@ static GB_key_mask_t angleToKeyMask(double angle)
             [[GBHapticManager sharedManager] doTapHaptic];
         }
         _lastMask = mask;
+        
+        GBViewController *viewController = self.viewController;
+        GBRunMode runMode = viewController.runMode;
+        if (runMode == GBRunModeRewind || runMode == GBRunModePaused) {
+            viewController.runMode = GBRunModeNormal;
+            [self fadeOverlayOut];
+        }
     }
 }
 
@@ -480,7 +487,7 @@ static GB_key_mask_t angleToKeyMask(double angle)
     screenFrame.size.width /= [UIScreen mainScreen].scale;
     screenFrame.size.height /= [UIScreen mainScreen].scale;
     
-    if (_fullScreenMode) {
+    if (_fullScreenMode == GBControllerFocusOn) {
         CGRect fullScreenFrame = layout.fullScreenRect;
         fullScreenFrame.origin.x /= [UIScreen mainScreen].scale;
         fullScreenFrame.origin.y /= [UIScreen mainScreen].scale;
@@ -569,13 +576,15 @@ static GB_key_mask_t angleToKeyMask(double angle)
     return [[GBROMManager sharedManager] stateFile:1];
 }
 
-- (void)saveSwipe
+- (void)saveSwipeFromController:(bool)fromController
 {
-    _screenSwiped = true;
-    self.viewController.runMode = GBRunModeNormal;
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"GBSwipeState"]) {
-        [self fadeOverlayOut];
-        return;
+    if (!fromController) {
+        _screenSwiped = true;
+        self.viewController.runMode = GBRunModeNormal;
+        if (![[NSUserDefaults standardUserDefaults] boolForKey:@"GBSwipeState"]) {
+            [self fadeOverlayOut];
+            return;
+        }
     }
     [self displayOverlayWithImage:@"square.and.arrow.down" orTitle:@"Saved state to Slot 1"];
     _fadeTimer = [NSTimer scheduledTimerWithTimeInterval:1 repeats:false block:^(NSTimer *timer) {
@@ -586,13 +595,15 @@ static GB_key_mask_t angleToKeyMask(double angle)
     [self.viewController start];
 }
 
-- (void)loadSwipe
+- (void)loadSwipeFromController:(bool)fromController
 {
-    _screenSwiped = true;
-    self.viewController.runMode = GBRunModeNormal;
-    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"GBSwipeState"]) {
-        [self fadeOverlayOut];
-        return;
+    if (!fromController) {
+        _screenSwiped = true;
+        self.viewController.runMode = GBRunModeNormal;
+        if (![[NSUserDefaults standardUserDefaults] boolForKey:@"GBSwipeState"]) {
+            [self fadeOverlayOut];
+            return;
+        }
     }
     [self displayOverlayWithImage:@"square.and.arrow.up" orTitle:@"Loaded state from Slot 1"];
     _fadeTimer = [NSTimer scheduledTimerWithTimeInterval:1 repeats:false block:^(NSTimer *timer) {
@@ -615,18 +626,18 @@ static GB_key_mask_t angleToKeyMask(double angle)
     _previewMode = true;
 }
 
-- (bool)fullScreenMode
+- (GBControllerFocus)fullScreenMode
 {
     return _fullScreenMode;
 }
 
-- (void)setFullScreenMode:(bool)fullScreenMode
+- (void)setFullScreenMode:(GBControllerFocus)fullScreenMode
 {
     if (fullScreenMode == _fullScreenMode) return;
     _fullScreenMode = fullScreenMode;
     [UIView animateWithDuration:1.0/3 animations:^{
         // Animating alpha has some weird quirks for some reason
-        _fadeView.backgroundColor = [UIColor colorWithWhite:0 alpha:fullScreenMode];
+        _fadeView.backgroundColor = [UIColor colorWithWhite:0 alpha:fullScreenMode? 1 : 0];
         [self setLayout:_layout];
     }];
     [self.window.rootViewController setNeedsStatusBarAppearanceUpdate];

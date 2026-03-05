@@ -16,7 +16,10 @@
 #import "GBCheckableAlertController.h"
 #import "GBPrinterFeedController.h"
 #import "GBCheatsController.h"
-#import "GCExtendedGamepad+AllElements.h"
+#import "UILabel+LockFonts.h"
+#import <CommonCrypto/CommonCrypto.h>
+#include <sys/xattr.h>
+#import "GCControllerGetElements.h"
 #import "GBZipReader.h"
 #import <sys/stat.h>
 #import <CoreMotion/CoreMotion.h>
@@ -79,7 +82,6 @@ static UIImage *CreateMenuImage(NSString *name)
         [source drawInRect:destRect];
     }];
     return [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
-
 }
 
 API_AVAILABLE(ios(13.0))
@@ -159,6 +161,8 @@ API_AVAILABLE(ios(13.0))
     
     NSString *_lastSavedROM;
     NSDate *_saveDate;
+    
+    unsigned _autosaveCountdown;
 }
 
 static void loadBootROM(GB_gameboy_t *gb, GB_boot_rom_t type)
@@ -225,6 +229,10 @@ static uint8_t cameraGetPixel(GB_gameboy_t *gb, uint8_t x, uint8_t y)
 static void rumbleCallback(GB_gameboy_t *gb, double amp)
 {
     GBViewController *self = (__bridge GBViewController *)GB_get_user_data(gb);
+    double strength = [[NSUserDefaults standardUserDefaults] doubleForKey:@"GBRumbleStrength"];
+    if (strength != 1) {
+        amp = pow(amp, strength) * strength;
+    }
     [self rumbleChanged:amp];
 }
 
@@ -330,7 +338,7 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
         _printerSpinner.color = theme.buttonColor;
 
         [self willRotateToInterfaceOrientation:[UIApplication sharedApplication].statusBarOrientation
-                                          duration:0];
+                                      duration:0];
         [_backgroundView reloadThemeImages];
         
         [self setNeedsStatusBarAppearanceUpdate];
@@ -428,8 +436,8 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
         // Configure the change camera button stacked on top of the camera position button
         _changeCameraButton = [[UIButton alloc] init];
         [_changeCameraButton  setImage:[UIImage systemImageNamed:@"camera.aperture"
-                                                withConfiguration:[UIImageSymbolConfiguration configurationWithScale:UIImageSymbolScaleLarge]]
-                                forState:UIControlStateNormal];
+                                               withConfiguration:[UIImageSymbolConfiguration configurationWithScale:UIImageSymbolScaleLarge]]
+                              forState:UIControlStateNormal];
         _changeCameraButton.backgroundColor = [UIColor systemBackgroundColor];
         _changeCameraButton.layer.cornerRadius = 6;
         _changeCameraButton.alpha = 0;
@@ -496,7 +504,7 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     else {
         UIImage *rotateImage = [[UIImage imageNamed:@"PrinterTemplate"] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
         [_printerButton setImage:rotateImage
-                               forState:UIControlStateNormal];
+                        forState:UIControlStateNormal];
         _printerButton.backgroundColor = [UIColor whiteColor];
     }
     
@@ -509,7 +517,6 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     
     [_backgroundView addSubview:_printerButton];
     [_backgroundView addSubview:_printerSpinner];
-
     
     [self updateMirrorWindow];
     
@@ -632,7 +639,7 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
 - (void)controllerDisconnected:(NSNotification *)notification
 {
     if (notification.object == _lastController) {
-        _backgroundView.fullScreenMode = false;
+        _backgroundView.fullScreenMode = GBControllerFocusOff;
     }
 }
 
@@ -640,25 +647,31 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
 {
     for (GCController *controller in [GCController controllers]) {
         __weak GCController *weakController = controller;
-        if (controller.extendedGamepad) {
-            [[controller.extendedGamepad elementsDictionary] enumerateKeysAndObjectsUsingBlock:^(NSNumber *usage, GCControllerElement *element, BOOL *stop) {
-                if ([element isKindOfClass:[GCControllerButtonInput class]]) {
-                    [(GCControllerButtonInput *)element setValueChangedHandler:^(GCControllerButtonInput *button, float value, BOOL pressed) {
-                        [self controller:weakController buttonChanged:button usage:usage.unsignedIntValue];
-                    }];
-                }
-                else if ([element isKindOfClass:[GCControllerDirectionPad class]]) {
-                    [(GCControllerDirectionPad *)element setValueChangedHandler:^(GCControllerDirectionPad *dpad, float xValue, float yValue) {
-                        [self controller:weakController axisChanged:dpad usage:usage.unsignedIntValue];
-                    }];
-                }
-            }];
-            
-            if (controller.motion) {
-                [controller.motion setValueChangedHandler:^(GCMotion *motion) {
-                    [self controller:weakController motionChanged:motion];
+        NSDictionary <NSNumber *, GCControllerElement *> *elements = GCControllerGetElements(controller);
+        if (!elements) continue; // Controller not supported
+        [elements enumerateKeysAndObjectsUsingBlock:^(NSNumber *usage, GCControllerElement *element, BOOL *stop) {
+            if ([element isKindOfClass:[GCControllerButtonInput class]]) {
+                [(GCControllerButtonInput *)element setValueChangedHandler:^(GCControllerButtonInput *button, float value, BOOL pressed) {
+                    [self controller:weakController buttonChanged:button usage:usage.unsignedIntValue];
                 }];
             }
+            else if ([element isKindOfClass:[GCControllerDirectionPad class]]) {
+                NSMutableSet *childrenUsages = [NSMutableSet set];
+                [elements enumerateKeysAndObjectsUsingBlock:^(NSNumber *childUsage, GCControllerElement *child, BOOL *stop) {
+                    if (child.collection == element) {
+                        [childrenUsages addObject:childUsage];
+                    }
+                }];
+                [(GCControllerDirectionPad *)element setValueChangedHandler:^(GCControllerDirectionPad *dpad, float xValue, float yValue) {
+                    [self controller:weakController axisChanged:dpad usage:usage.unsignedIntValue childrenUsages:childrenUsages];
+                }];
+            }
+        }];
+        
+        if (controller.motion) {
+            [controller.motion setValueChangedHandler:^(GCMotion *motion) {
+                [self controller:weakController motionChanged:motion];
+            }];
         }
     }
 }
@@ -673,9 +686,8 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
 - (void)controller:(GCController *)controller buttonChanged:(GCControllerButtonInput *)button usage:(GBControllerUsage)usage
 {
     [self updateLastController:controller];
-    if (_running && button.value > 0.25 &&
-        [[NSUserDefaults standardUserDefaults] boolForKey:@"GBControllersHideInterface"]) {
-        _backgroundView.fullScreenMode = true;
+    if (_running && button.value > 0.25) {
+        _backgroundView.fullScreenMode = [[NSUserDefaults standardUserDefaults] integerForKey:@"GBControllersHideInterface"];
     }
     
     GBButton gbButton = [GBSettingsViewController controller:controller convertUsageToButton:usage];
@@ -691,6 +703,10 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
         case GBSelect:
         case GBStart:
             GB_set_key_state(&_gb, (GB_key_t)gbButton, button.value > 0.25);
+            if (_runMode == GBRunModeRewind || _runMode == GBRunModePaused) {
+                self.runMode = GBRunModeNormal;
+                [_backgroundView fadeOverlayOut];
+            }
             break;
         case GBRapidA:
             _rapidA = button.value > 0.25;
@@ -748,11 +764,33 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
                 }
             }
             break;
+        case GBSaveState1:
+            if (_romLoaded) {
+                [_backgroundView saveSwipeFromController:true];
+            }
+            break;
+        case GBLoadState1:
+            if (_romLoaded) {
+                [_backgroundView loadSwipeFromController:true];
+            }
+            break;
+        case GBReset:
+            if (_romLoaded) {
+                [self stop];
+                _skipAutoLoad = true;
+                GB_reset(&_gb);
+                [self start];
+            }
+            break;
+        case GBOpenMenu:
+            self.window.backgroundColor = nil;
+            [self presentViewController:[GBMenuViewController menu] animated:true completion:nil];
+            break;
         default: break;
     }
 }
 
-- (void)controller:(GCController *)controller axisChanged:(GCControllerDirectionPad *)axis usage:(GBControllerUsage)usage
+- (void)controller:(GCController *)controller axisChanged:(GCControllerDirectionPad *)axis usage:(GBControllerUsage)usage childrenUsages:(NSSet *)childrenUsages
 {
     [self updateLastController:controller];
     bool left = axis.left.value > 0.5;
@@ -760,9 +798,23 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     bool up = axis.up.value > 0.5;
     bool down = axis.down.value > 0.5;
     
-    if (_running && (left || right || up || down ) &&
-        [[NSUserDefaults standardUserDefaults] boolForKey:@"GBControllersHideInterface"]) {
-        _backgroundView.fullScreenMode = true;
+    bool hasUnmappedChild = false;
+    for (NSNumber *childUsage in childrenUsages) {
+        if ([GBSettingsViewController controller:controller convertUsageToButton:childUsage.unsignedIntValue] != GBUnusedButton) {
+            GCControllerButtonInput *child = (id)(GCControllerGetElements(controller)[childUsage]);
+            if ([child isKindOfClass:[GCControllerButtonInput class]] && child.pressed) {
+                left = right = up = down = false;
+            }
+        }
+        else {
+            hasUnmappedChild = true;
+        }
+    }
+    
+    if (!hasUnmappedChild) return;
+    
+    if (_running && (left || right || up || down)) {
+        _backgroundView.fullScreenMode = [[NSUserDefaults standardUserDefaults] integerForKey:@"GBControllersHideInterface"];
     }
     
     if ([[NSUserDefaults standardUserDefaults] boolForKey:@"GBFauxAnalogInputs"]) {
@@ -774,6 +826,10 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     GB_set_key_state(&_gb, GB_KEY_RIGHT, right);
     GB_set_key_state(&_gb, GB_KEY_UP, up);
     GB_set_key_state(&_gb, GB_KEY_DOWN, down);
+    if (_runMode == GBRunModeRewind || _runMode == GBRunModePaused) {
+        self.runMode = GBRunModeNormal;
+        [_backgroundView fadeOverlayOut];
+    }
 }
 
 - (void)controller:(GCController *)controller motionChanged:(GCMotion *)motion
@@ -953,8 +1009,8 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
                             GB_switch_model_and_reset(&_gb, [[NSUserDefaults standardUserDefaults] integerForKey:@"GBSGBModel"]);
                         }
                     }
-                    GB_rewind_reset(&_gb);
                 }
+                GB_rewind_reset(&_gb);
             }
         }
     }
@@ -1229,7 +1285,6 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     if (_orientation == UIInterfaceOrientationPortrait || _orientation == UIInterfaceOrientationPortraitUpsideDown) {
         landscape = false;
     }
-        
     
     _cameraPositionButton.frame = CGRectMake(insets.left + 8,
                                              _backgroundView.bounds.size.height - 8 - insets.bottom - 32,
@@ -1299,7 +1354,6 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     }
     return (_verticalLayout.theme.isDark || _backgroundView.fullScreenMode)? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
 }
-
 
 - (void)preRun
 {
@@ -1395,8 +1449,226 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     }
 }
 
+- (NSString *)formatDate:(NSDate *)date
+{
+    
+    NSCalendar *calendar = [NSCalendar currentCalendar];
+    NSDate *now = [NSDate date];
+    
+    NSDateFormatter *formatter = [[NSDateFormatter alloc] init];
+    formatter.locale = [NSLocale currentLocale];
+    formatter.timeZone = [NSTimeZone localTimeZone];
+    formatter.dateStyle = NSDateFormatterNoStyle;
+    formatter.timeStyle = NSDateFormatterMediumStyle;
+    NSString *time = [formatter stringFromDate:date];
+    
+    if ([calendar isDate:date inSameDayAsDate:now]) {
+        return time;
+    }
+    
+    if ([calendar component:NSCalendarUnitYear fromDate:date] == [calendar component:NSCalendarUnitYear fromDate:now]) {
+        formatter.dateFormat = [NSDateFormatter dateFormatFromTemplate:@"MMM d"
+                                                               options:0
+                                                                locale:formatter.locale];
+        return [[formatter stringFromDate:date] stringByAppendingFormat:@", %@", time];
+    }
+    
+    formatter.dateFormat = [NSDateFormatter dateFormatFromTemplate:@"MMM d yyyy"
+                                                           options:0
+                                                            locale:formatter.locale];
+    return [[formatter stringFromDate:date] stringByAppendingFormat:@", %@", time];
+}
+
+- (NSData *)batteryHash
+{
+    NSFileHandle *file = [NSFileHandle fileHandleForReadingAtPath:[GBROMManager sharedManager].batterySaveFile];
+    if (!file) return nil;
+    
+    CC_SHA256_CTX ctx;
+    CC_SHA256_Init(&ctx);
+    
+    while (true) {
+        @autoreleasepool {
+            NSData *chunk = [file readDataOfLength:0x4000];
+            if (chunk.length == 0) break;
+            CC_SHA256_Update(&ctx, chunk.bytes, (CC_LONG)chunk.length);
+        }
+    }
+    [file closeFile];
+    
+    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+    CC_SHA256_Final(digest, &ctx);
+    
+    return [NSData dataWithBytes:digest length:CC_SHA256_DIGEST_LENGTH];
+}
+
+- (bool)areSavesInSync
+{
+    if (!GBROMManager.sharedManager.currentROM) return true; // No ROM
+    NSString *saveState = [[GBROMManager sharedManager] autosaveStateFile];
+    NSString *batterySave = [[GBROMManager sharedManager] batterySaveFile];
+    
+    // There can't be a mismatch if one of the files is missing
+    if (access(saveState.UTF8String, F_OK) || access(batterySave.UTF8String, F_OK)) return true;
+    
+    uint8_t savedHash[CC_SHA256_DIGEST_LENGTH];
+    if (getxattr(saveState.UTF8String, "battery-hash", &savedHash, sizeof(savedHash), 0, 0) == sizeof(savedHash)) {
+        NSData *computedHash = [self batteryHash];
+        if (computedHash && memcmp(savedHash, computedHash.bytes, sizeof(savedHash)) == 0) {
+            return true; // Battery didn't change
+        }
+    }
+    
+    GB_gameboy_t *gb = NULL;
+    GB_model_t model;
+    if (GB_get_state_model(saveState.UTF8String, &model)) {
+        return true; // Not a valid state, ignore
+    }
+    gb = GB_init(GB_alloc(), model);
+    NSString *romFile = [[GBROMManager sharedManager] romFile];
+    if ([romFile.pathExtension.lowercaseString isEqualToString:@"isx"]) {
+        if (GB_load_isx(gb, romFile.fileSystemRepresentation)) {
+            // Can't load ROM
+            GB_dealloc(gb);
+            return true;
+        }
+    }
+    else {
+        if (GB_load_rom(gb, romFile.fileSystemRepresentation)) {
+            // Can't load ROM
+            GB_dealloc(gb);
+            return true;
+        }
+    }
+    if (GB_load_state(gb, saveState.UTF8String)) {
+        // Not a valid state again, ignore
+        GB_dealloc(gb);
+        return true;
+    }
+    
+    size_t ramSize = 0;
+    const uint8_t *ram = GB_get_direct_access(gb, GB_DIRECT_ACCESS_CART_RAM, &ramSize, NULL);
+    uint8_t *ramCopy = malloc(ramSize);
+    memcpy(ramCopy, ram, ramSize);
+    
+    GB_load_battery(gb, batterySave.UTF8String);
+    ram = GB_get_direct_access(gb, GB_DIRECT_ACCESS_CART_RAM, &ramSize, NULL);
+    bool matching = memcmp(ram, ramCopy, ramSize) == 0;
+    free(ramCopy);
+    GB_dealloc(gb);
+    return matching;
+}
+
+- (bool)verifySavesInSync
+{
+    if ([self areSavesInSync]) return true; // Saves are in sync
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    __block bool ret = false;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"Save Conflict Detected"
+                                                                       message:[NSString stringWithFormat: @"“%@” has both an automatic save state and a conflicting battery save file. The battery save may have newer progress that isn’t in the save state. Which one would you like to keep?", [GBROMManager sharedManager].currentROM.lastPathComponent]
+                                                                preferredStyle:UIAlertControllerStyleAlert];
+        
+        NSString *saveState = [[GBROMManager sharedManager] autosaveStateFile];
+        NSString *batterySave = [[GBROMManager sharedManager] batterySaveFile];
+        
+        NSDate *date;
+        [[NSURL fileURLWithPath:saveState] getResourceValue:&date
+                                                     forKey:NSURLContentModificationDateKey
+                                                      error:nil];
+        
+        NSString *stateDateString = [self formatDate:date];
+        
+        UIAlertAction *stateAction = [UIAlertAction actionWithTitle:@"Save State\n"
+                                                              style:UIAlertActionStyleDefault
+                                                            handler:^(UIAlertAction *action) {
+            unlink(batterySave.UTF8String);
+            ret = true;
+            dispatch_semaphore_signal(sem);
+        }];
+
+        [[NSURL fileURLWithPath:batterySave] getResourceValue:&date
+                                                       forKey:NSURLContentModificationDateKey
+                                                        error:nil];
+        
+        NSString *batteryDateString = [self formatDate:date];
+        
+        UIAlertAction *batteryAction = [UIAlertAction actionWithTitle:@"Battery Save\n"
+                                                                style:UIAlertActionStyleDefault
+                                                              handler:^(UIAlertAction *action) {
+            unlink(saveState.UTF8String);
+            ret = true;
+            dispatch_semaphore_signal(sem);
+        }];
+        [alert addAction:stateAction];
+        [alert addAction:batteryAction];
+        [alert addAction:[UIAlertAction actionWithTitle:@"Close ROM"
+                                                  style:UIAlertActionStyleCancel
+                                                handler:^(UIAlertAction *action) {
+            ret = false;
+            dispatch_semaphore_signal(sem);
+        }]];
+        
+        // hack
+        _running = false;
+        [self presentViewController:alert animated:true completion:nil];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            NSMutableSet<UIView *> *views = [NSMutableSet setWithObject:alert.view];
+            
+            UIColor *secondaryLabelColor;
+            if (@available(iOS 13.0, *)) {
+                secondaryLabelColor = [UIColor secondaryLabelColor];
+            }
+            else {
+                secondaryLabelColor = [UIColor systemGrayColor];
+            }
+            
+            UILabel *view;
+            while ((view = (UILabel *)views.anyObject)) {
+                [views removeObject:view];
+                [views addObjectsFromArray:view.subviews];
+                if ([view isKindOfClass:[UILabel class]]) {
+                    if ([view.text isEqualToString:stateAction.title]) {
+                        NSMutableAttributedString *text = [view.attributedText mutableCopy];
+                        [text appendAttributedString:[[NSAttributedString alloc] initWithString:stateDateString
+                                                                                     attributes:@{
+                            NSFontAttributeName: [UIFont systemFontOfSize:UIFont.smallSystemFontSize],
+                            NSForegroundColorAttributeName: secondaryLabelColor,
+                        }]];
+                        view.attributedText = text;
+                        view.numberOfLines = 2;
+                        view.locksFonts = true;
+                    }
+                    if ([view.text isEqualToString:batteryAction.title]) {
+                        NSMutableAttributedString *text = [view.attributedText mutableCopy];
+                        [text appendAttributedString:[[NSAttributedString alloc] initWithString:batteryDateString
+                                                                                     attributes:@{
+                            NSFontAttributeName: [UIFont systemFontOfSize:UIFont.smallSystemFontSize],
+                            NSForegroundColorAttributeName: secondaryLabelColor,
+                        }]];
+                        view.attributedText = text;
+                        view.numberOfLines = 2;
+                        view.locksFonts = true;
+                    }
+                }
+            }
+        });
+    });
+    dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+    _running = true;
+    return ret;
+}
+
 - (void)run
 {
+    if (![self verifySavesInSync]) {
+        _romLoaded = false;
+        _running = false;
+        _stopping = false;
+        GBROMManager.sharedManager.currentROM = nil;
+        return;
+    }
+
     [self loadROM];
     if (!_romLoaded) {
         _running = false;
@@ -1404,6 +1676,8 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
         return;
     }
     [self preRun];
+    const unsigned autosaveFrequency = 60 * 60;
+    _autosaveCountdown = autosaveFrequency;
     while (_running) {
         if (_rewind) {
             _rewind = false;
@@ -1433,6 +1707,10 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
         }
         if (_runMode != GBRunModePaused) {
             GB_run(&_gb);
+            if (!_autosaveCountdown) {
+                _autosaveCountdown = autosaveFrequency;
+                [self performAutosave];
+            }
         }
     }
     [self postRun];
@@ -1478,6 +1756,21 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
     return ret;
 }
 
+- (void)performAutosave
+{
+    GB_save_battery(&_gb, [GBROMManager sharedManager].batterySaveFile.fileSystemRepresentation);
+    [self saveStateToFile:[GBROMManager sharedManager].autosaveStateFile];
+    // Assoicate the battery save with the save state via a hash xattr
+    NSData *batteryHash = [self batteryHash];
+    if (batteryHash) {
+        setxattr([GBROMManager sharedManager].autosaveStateFile.UTF8String, "battery-hash",
+                 batteryHash.bytes, batteryHash.length, 0, 0);
+    }
+    else {
+        removexattr([GBROMManager sharedManager].autosaveStateFile.UTF8String, "battery-hash", 0);
+    }
+}
+
 - (void)postRun
 {
     [_audioLock lock];
@@ -1488,8 +1781,17 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
     _audioClient = nil;
 
     if (!_swappingROM) {
-        GB_save_battery(&_gb, [GBROMManager sharedManager].batterySaveFile.fileSystemRepresentation);
-        [self saveStateToFile:[GBROMManager sharedManager].autosaveStateFile];
+        [self performAutosave];
+        
+        // Assoicate the battery save with the save state via a hash xattr
+        NSData *batteryHash = [self batteryHash];
+        if (batteryHash) {
+            setxattr([GBROMManager sharedManager].autosaveStateFile.UTF8String, "battery-hash",
+                     batteryHash.bytes, batteryHash.length, 0, 0);
+        }
+        else {
+            removexattr([GBROMManager sharedManager].autosaveStateFile.UTF8String, "battery-hash", 0);
+        }
 
         NSDate *date;
         [[NSURL fileURLWithPath:[GBROMManager sharedManager].autosaveStateFile] getResourceValue:&date
@@ -1497,7 +1799,6 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
                                                                                            error:nil];
         _saveDate = date;
         _lastSavedROM = [GBROMManager sharedManager].currentROM;
-
     }
     [[GBHapticManager sharedManager] setRumbleStrength:0];
     if (@available(iOS 14.0, *)) {
@@ -1627,6 +1928,13 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
     if (_rapidB) {
         _rapidBCount++;
         GB_set_key_state(&_gb, GB_KEY_B, !(_rapidBCount & 2));
+    }
+    _autosaveCountdown--;
+    if (_rapidA || _rapidB) {
+        if (_runMode == GBRunModeRewind || _runMode == GBRunModePaused) {
+            self.runMode = GBRunModeNormal;
+            [_backgroundView fadeOverlayOut];
+        }
     }
     _rewind = _runMode == GBRunModeRewind;
 }
@@ -1818,7 +2126,6 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
             }
         }];
     });
-
 }
 
 - (BOOL)application:(UIApplication *)app openURL:(NSURL *)url options:(NSDictionary<UIApplicationOpenURLOptionsKey,id> *)options
@@ -1922,7 +2229,12 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
                         
                         
                         _cameraSession = [AVCaptureSession new];
-                        _cameraSession.sessionPreset = AVCaptureSessionPreset352x288;
+                        if ([device supportsAVCaptureSessionPreset:AVCaptureSessionPreset352x288]) {
+                            _cameraSession.sessionPreset = AVCaptureSessionPreset352x288;
+                        }
+                        else if ([device supportsAVCaptureSessionPreset:AVCaptureSessionPresetMedium]) {
+                            _cameraSession.sessionPreset = AVCaptureSessionPresetMedium;
+                        }
                         
                         [_cameraSession addInput: input];
                         [_cameraSession addOutput: _cameraOutput];
@@ -1934,6 +2246,7 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
                 @catch (NSException *exception) {
                     /* I have not tested camera support on many devices, so we catch exceptions just in case. */
                     GB_camera_updated(&_gb);
+                    _cameraSession = nil;
                 }
             });
         }
@@ -1956,8 +2269,8 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
         }
 
         _disableCameraTimer = [NSTimer scheduledTimerWithTimeInterval:1
-                                                             repeats:false
-                                                               block:^(NSTimer *timer) {
+                                                              repeats:false
+                                                                block:^(NSTimer *timer) {
             if (_cameraPositionButton.alpha) {
                 [UIView animateWithDuration:0.25 animations:^{
                     _cameraPositionButton.alpha = 0;
@@ -2124,8 +2437,8 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
     }]];
     menu.selectedAction = menu.actions[_printerConnected];
     [menu addAction:[UIAlertAction actionWithTitle:@"Cancel"
-                                            style:UIAlertActionStyleCancel
-                                          handler:nil]];
+                                             style:UIAlertActionStyleCancel
+                                           handler:nil]];
     [self presentViewController:menu animated:true completion:nil];
 }
 
