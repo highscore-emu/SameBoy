@@ -307,6 +307,8 @@ sameboy_core_reset (HsCore *core, gboolean hard, GError **error)
 {
   SameBoyCore *self = SAMEBOY_CORE (core);
 
+  self->colorburst_phase = 0;
+
   if (hard) {
     if (self->model != self->pending_model) {
       self->model = self->pending_model;
@@ -387,6 +389,8 @@ sameboy_core_load_state (HsCore          *core,
     callback (core, &error);
     return;
   }
+
+  self->colorburst_phase = hs_core_get_colorburst_phase (core);
 
   callback (core, NULL);
 }
