@@ -307,13 +307,13 @@ sameboy_core_reset (HsCore *core, gboolean hard, GError **error)
 {
   SameBoyCore *self = SAMEBOY_CORE (core);
 
-  self->colorburst_phase = 0;
-
   if (hard) {
     if (self->model != self->pending_model) {
       self->model = self->pending_model;
       GB_switch_model_and_reset (self->gameboy, self->model);
       update_framebuffer (self);
+      self->colorburst_phase = 0;
+
       return TRUE;
     }
 
