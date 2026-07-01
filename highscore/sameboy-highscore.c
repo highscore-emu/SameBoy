@@ -286,12 +286,13 @@ sameboy_core_run_frame (HsCore *core)
     int buf_size = GB_get_screen_width (self->gameboy) * GB_get_screen_height (self->gameboy) * sizeof (guint32);
     memcpy (hs_software_context_acquire_framebuffer (self->context), self->frame_buffer, buf_size);
     hs_software_context_release_framebuffer (self->context);
-    hs_software_context_set_colorburst_phase (self->context, self->colorburst_phase);
 
-    if (hs_core_get_region (core) == HS_REGION_NTSC)
+    if (hs_core_get_region (core) == HS_REGION_NTSC) {
+      hs_software_context_set_colorburst (self->context, 1.5, 1.0 / 3.0, self->colorburst_phase / 3.0);
       self->colorburst_phase ^= 1;
-    else
-      self->colorburst_phase = 0;
+    } else {
+      hs_software_context_set_colorburst (self->context, 1.2, 1.0 / 6.0, 0.0);
+    }
 
     self->frame_updated = FALSE;
   }
@@ -390,7 +391,7 @@ sameboy_core_load_state (HsCore          *core,
     return;
   }
 
-  self->colorburst_phase = hs_core_get_colorburst_phase (core);
+  self->colorburst_phase = (hs_core_get_colorburst_offset (core) > 0.1) ? 1.0 : 0.0;
 
   callback (core, NULL);
 }
