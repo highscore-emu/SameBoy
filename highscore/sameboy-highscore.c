@@ -240,6 +240,7 @@ sameboy_core_load_rom (HsCore      *core,
   GB_set_sample_rate (self->gameboy, SAMPLE_RATE);
   GB_set_highpass_filter_mode (self->gameboy, GB_HIGHPASS_ACCURATE);
   GB_set_color_correction_mode (self->gameboy, GB_COLOR_CORRECTION_DISABLED);
+  GB_set_rumble_mode (self->gameboy, GB_RUMBLE_CARTRIDGE_ONLY);
 
   update_framebuffer (self);
 
