@@ -7,3 +7,9 @@ Authors=Lior Halphon;
 Website=https://sameboy.github.io/
 LicensePath=LICENSE
 Platforms=GameBoy;GameBoyColor;
+
+[Firmware:GameBoy]
+boot=optional
+
+[Firmware:GameBoyColor]
+boot=optional
