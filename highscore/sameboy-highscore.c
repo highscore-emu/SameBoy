@@ -542,22 +542,22 @@ sameboy_game_boy_core_set_model (HsGameBoyCore *core, HsGameBoyModel model)
   SameBoyCore *self = SAMEBOY_CORE (core);
 
   switch (model) {
-  case HS_GAME_BOY_MODEL_GAME_BOY:
+  case HS_GAME_BOY_MODEL_DMG:
     self->pending_model = GB_MODEL_DMG_B;
     break;
-  case HS_GAME_BOY_MODEL_GAME_BOY_POCKET:
+  case HS_GAME_BOY_MODEL_MGB:
     self->pending_model = GB_MODEL_MGB;
     break;
-  case HS_GAME_BOY_MODEL_GAME_BOY_COLOR:
+  case HS_GAME_BOY_MODEL_CGB:
     self->pending_model = GB_MODEL_CGB_D;
     break;
-  case HS_GAME_BOY_MODEL_GAME_BOY_ADVANCE:
+  case HS_GAME_BOY_MODEL_AGB:
     self->pending_model = GB_MODEL_AGB;
     break;
-  case HS_GAME_BOY_MODEL_SUPER_GAME_BOY:
+  case HS_GAME_BOY_MODEL_SGB:
     self->pending_model = GB_MODEL_SGB;
     break;
-  case HS_GAME_BOY_MODEL_SUPER_GAME_BOY_2:
+  case HS_GAME_BOY_MODEL_SGB2:
     self->pending_model = GB_MODEL_SGB2;
     break;
   default:
