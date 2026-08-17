@@ -49,26 +49,53 @@ log_cb (GB_gameboy_t *gb, const char *string, GB_log_attributes_t attributes)
 static void
 boot_rom_load_cb (GB_gameboy_t *gb, GB_boot_rom_t type)
 {
-  const char *rom_name = (char *[]) {
-    [GB_BOOT_ROM_DMG_0] = "dmg_boot.bin",
-    [GB_BOOT_ROM_DMG] = "dmg_boot.bin",
-    [GB_BOOT_ROM_MGB] = "mgb_boot.bin",
-    [GB_BOOT_ROM_SGB] = "sgb_boot.bin",
-    [GB_BOOT_ROM_SGB2] = "sgb2_boot.bin",
-    [GB_BOOT_ROM_CGB_0] = "cgb0_boot.bin",
-    [GB_BOOT_ROM_CGB] = "cgb_boot.bin",
-    [GB_BOOT_ROM_CGB_E] = "cgb_boot.bin",
-    [GB_BOOT_ROM_AGB_0] = "agb_boot.bin",
-    [GB_BOOT_ROM_AGB] = "agb_boot.bin",
-  }[type];
+  SameBoyCore *self = GB_get_user_data (gb);
+  g_autofree char *path = NULL;
 
-  g_autofree char *path = g_build_filename (CORE_DIR, rom_name, NULL);
+  const char *user_firmware = NULL;
+  const char *builtin_name = NULL;
 
-  if (GB_load_boot_rom (gb, path)) {
-    SameBoyCore *self = GB_get_user_data (gb);
-
-    hs_core_log (HS_CORE (self), HS_LOG_CRITICAL, "Failed to load boot ROM: %s", rom_name);
+  switch (type) {
+    case GB_BOOT_ROM_DMG_0:
+    case GB_BOOT_ROM_DMG:
+      user_firmware = hs_core_query_firmware_path (HS_CORE (self), HS_GAME_BOY_FIRMWARE_DMG_BOOT);
+      builtin_name = "dmg_boot.bin";
+      break;
+    case GB_BOOT_ROM_MGB:
+      builtin_name = "mgb_boot.bin";
+      break;
+    case GB_BOOT_ROM_SGB:
+      builtin_name = "sgb_boot.bin";
+      break;
+    case GB_BOOT_ROM_SGB2:
+      builtin_name = "sgb2_boot.bin";
+      break;
+    case GB_BOOT_ROM_CGB_0:
+      user_firmware = hs_core_query_firmware_path (HS_CORE (self), HS_GAME_BOY_COLOR_FIRMWARE_CGB_BOOT);
+      builtin_name = "cgb0_boot.bin";
+      break;
+    case GB_BOOT_ROM_CGB:
+    case GB_BOOT_ROM_CGB_E:
+      user_firmware = hs_core_query_firmware_path (HS_CORE (self), HS_GAME_BOY_COLOR_FIRMWARE_CGB_BOOT);
+      builtin_name = "cgb_boot.bin";
+      break;
+    case GB_BOOT_ROM_AGB_0:
+    case GB_BOOT_ROM_AGB:
+      user_firmware = hs_core_query_firmware_path (HS_CORE (self), HS_GAME_BOY_COLOR_FIRMWARE_CGB_AGB_BOOT);
+      builtin_name = "agb_boot.bin";
+      break;
+    default:
+      g_assert_not_reached ();
   }
+
+  if (user_firmware)
+    path = g_strdup (user_firmware);
+
+  if (!path)
+    path = g_build_filename (CORE_DIR, builtin_name, NULL);
+
+  if (GB_load_boot_rom (gb, path))
+    hs_core_log (HS_CORE (self), HS_LOG_CRITICAL, "Failed to load boot ROM: %s", builtin_name);
 }
 
 static void
