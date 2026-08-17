@@ -9,7 +9,9 @@ LicensePath=LICENSE
 Platforms=GameBoy;GameBoyColor;
 
 [Firmware:GameBoy]
-boot=optional
+dmg-boot=optional
+mgb-boot=optional
 
 [Firmware:GameBoyColor]
-boot=optional
+cgb-boot=optional
+cgb-agb-boot=optional
