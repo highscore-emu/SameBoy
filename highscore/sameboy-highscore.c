@@ -62,6 +62,7 @@ boot_rom_load_cb (GB_gameboy_t *gb, GB_boot_rom_t type)
       builtin_name = "dmg_boot.bin";
       break;
     case GB_BOOT_ROM_MGB:
+      user_firmware = hs_core_query_firmware_path (HS_CORE (self), HS_GAME_BOY_FIRMWARE_MGB_BOOT);
       builtin_name = "mgb_boot.bin";
       break;
     case GB_BOOT_ROM_SGB:
