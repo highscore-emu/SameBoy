@@ -16,6 +16,7 @@ struct _SameBoyCore
 
   GB_model_t model;
   GB_model_t pending_model;
+  HsGameBoyAccessory accessory;
 
   char *save_location;
   int colorburst_phase;
@@ -233,6 +234,51 @@ load_save (SameBoyCore *self, GError **error)
   return TRUE;
 }
 
+static void
+print_image_cb (GB_gameboy_t *gb,
+                uint32_t     *image,
+                uint8_t       height,
+                uint8_t       top_margin,
+                uint8_t       bottom_margin,
+                uint8_t       exposure)
+{
+  SameBoyCore *self = GB_get_user_data (gb);
+
+  guint8 width = 160;
+  guint8 *data = g_new (guint8, width * height);
+
+  for (int i = 0; i < width * height; i++)
+    data[i] = image[i] & 0xFF;
+
+  GBytes *bytes = g_bytes_new_take (data, width * height);
+
+  hs_game_boy_core_emit_print_started (HS_GAME_BOY_CORE (self), bytes, width, height);
+
+  g_bytes_unref (bytes);
+}
+
+static void
+printer_done_cb (GB_gameboy_t *gb)
+{
+  SameBoyCore *self = GB_get_user_data (gb);
+
+  hs_game_boy_core_emit_print_done (HS_GAME_BOY_CORE (self));
+}
+
+static void
+update_accessory (SameBoyCore *self) {
+  switch (self->accessory) {
+    case HS_GAME_BOY_ACCESSORY_NONE:
+      // FIXME: SameBoy doesn't have a way to unplug it?..
+      break;
+    case HS_GAME_BOY_ACCESSORY_PRINTER:
+      GB_connect_printer (self->gameboy, print_image_cb, printer_done_cb);
+      break;
+    default:
+      g_assert_not_reached ();
+  }
+}
+
 static gboolean
 sameboy_core_load_rom (HsCore      *core,
                        const char **rom_paths,
@@ -279,6 +325,8 @@ sameboy_core_load_rom (HsCore      *core,
 
   if (!load_save (self, error))
     return FALSE;
+
+  update_accessory (self);
 
   return TRUE;
 }
@@ -566,9 +614,24 @@ sameboy_game_boy_core_set_model (HsGameBoyCore *core, HsGameBoyModel model)
 }
 
 static void
+sameboy_game_boy_core_set_accessory (HsGameBoyCore *core, HsGameBoyAccessory accessory)
+{
+  SameBoyCore *self = SAMEBOY_CORE (core);
+
+  if (self->accessory == accessory)
+    return;
+
+  self->accessory = accessory;
+
+  if (self->gameboy)
+    update_accessory (self);
+}
+
+static void
 sameboy_game_boy_core_init (HsGameBoyCoreInterface *iface)
 {
   iface->set_model = sameboy_game_boy_core_set_model;
+  iface->set_accessory = sameboy_game_boy_core_set_accessory;
 }
 
 static void

@@ -99,6 +99,7 @@ sameboy_source = [
   '../Core/joypad.c',
   '../Core/mbc.c',
   '../Core/memory.c',
+  '../Core/printer.c',
   '../Core/random.c',
   '../Core/rumble.c',
   '../Core/save_state.c',
