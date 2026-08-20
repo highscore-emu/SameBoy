@@ -252,7 +252,8 @@ print_image_cb (GB_gameboy_t *gb,
 
   GBytes *bytes = g_bytes_new_take (data, width * height);
 
-  hs_game_boy_core_emit_print_started (HS_GAME_BOY_CORE (self), bytes, top_margin, bottom_margin);
+  hs_game_boy_core_emit_print_started (HS_GAME_BOY_CORE (self), bytes,
+                                       top_margin, bottom_margin, exposure);
 
   g_bytes_unref (bytes);
 }
