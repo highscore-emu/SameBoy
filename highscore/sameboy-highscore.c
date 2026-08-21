@@ -391,12 +391,16 @@ sameboy_core_reset (HsCore *core, gboolean hard, GError **error)
       self->model = self->pending_model;
       GB_switch_model_and_reset (self->gameboy, self->model);
       update_framebuffer (self);
+      update_accessory (self);
       self->colorburst_phase = 0;
 
       return TRUE;
     }
 
     GB_reset (self->gameboy);
+    update_accessory (self);
+    self->colorburst_phase = 0;
+
     return TRUE;
   }
 
@@ -469,6 +473,7 @@ sameboy_core_load_state (HsCore          *core,
     return;
   }
 
+  update_accessory (self);
   self->colorburst_phase = (hs_core_get_colorburst_offset (core) > 0.1) ? 1.0 : 0.0;
 
   callback (core, NULL);
