@@ -5,6 +5,9 @@ Commit=@commit@
 Module=sameboy-highscore.so
 Authors=Lior Halphon;
 Website=https://sameboy.github.io/
+Donate=https://github.com/sponsors/LIJI32
+SourceCode=https://github.com/highscore-emu/SameBoy
+Issues=https://github.com/highscore-emu/SameBoy/issues
 LicensePath=LICENSE
 Platforms=GameBoy;GameBoyColor;
 
