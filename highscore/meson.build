@@ -65,7 +65,7 @@ sameboy_boot_o_gen = generator(rgbasm,
 )
 
 sameboy_boot_roms = [
-  'agb_boot', 'cgb0_boot', 'cgb_boot', 'cgb_boot_fast', 'dmg_boot', 'mgb_boot', 'sgb2_boot', 'sgb_boot',
+  'agb_boot', 'cgb0_boot', 'cgb_boot', 'dmg_boot', 'mgb_boot', 'sgb2_boot', 'sgb_boot',
 ]
 
 foreach boot_rom : sameboy_boot_roms
