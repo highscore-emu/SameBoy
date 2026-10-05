@@ -366,10 +366,10 @@ sameboy_core_run_frame (HsCore *core)
     hs_software_context_release_framebuffer (self->context);
 
     if (hs_core_get_region (core) == HS_REGION_NTSC) {
-      hs_software_context_set_colorburst (self->context, 1.5, 1.0 / 3.0, self->colorburst_phase / 3.0);
+      hs_software_context_set_colorburst (self->context, 1.5, -1.0 / 3.0, self->colorburst_phase / 3.0);
       self->colorburst_phase ^= 1;
     } else {
-      hs_software_context_set_colorburst (self->context, 1.2, 1.0 / 6.0, 0.0);
+      hs_software_context_set_colorburst (self->context, 1.2, -1.0 / 6.0, 0.0);
     }
 
     self->frame_updated = FALSE;
