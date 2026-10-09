@@ -1,5 +1,5 @@
 project('sameboy-highscore', ['c', 'cpp'],
-  version : '1.0.3',
+  version : '1.0.4',
   default_options: ['c_std=gnu11']
 )
 
