@@ -16,9 +16,10 @@
 #import "GBCheckableAlertController.h"
 #import "GBPrinterFeedController.h"
 #import "GBCheatsController.h"
+#import "GBLazyObject.h"
 #import "UILabel+LockFonts.h"
 #import <CommonCrypto/CommonCrypto.h>
-#include <sys/xattr.h>
+#import <sys/xattr.h>
 #import "GCControllerGetElements.h"
 #import "GBZipReader.h"
 #import <sys/stat.h>
@@ -26,40 +27,20 @@
 #import <dlfcn.h>
 #import <objc/runtime.h>
 
-#if !__has_include(<UIKit/UISliderTrackConfiguration.h>)
-/* Building with older SDKs */
-
-typedef NS_ENUM(NSInteger, UIMenuSystemElementGroupPreference) {
-    UIMenuSystemElementGroupPreferenceAutomatic = 0,
-    UIMenuSystemElementGroupPreferenceRemoved,
-    UIMenuSystemElementGroupPreferenceIncluded,
-};
-
-API_AVAILABLE(ios(19.0))
-@interface UIMainMenuSystemConfiguration : NSObject <NSCopying>
-@property (nonatomic, assign) UIMenuSystemElementGroupPreference newScenePreference;
-@property (nonatomic, assign) UIMenuSystemElementGroupPreference documentPreference;
-@property (nonatomic, assign) UIMenuSystemElementGroupPreference printingPreference;
-@property (nonatomic, assign) UIMenuSystemElementGroupPreference findingPreference;
-@property (nonatomic, assign) UIMenuSystemElementGroupPreference toolbarPreference;
-@property (nonatomic, assign) UIMenuSystemElementGroupPreference sidebarPreference;
-@property (nonatomic, assign) UIMenuSystemElementGroupPreference inspectorPreference;
-@property (nonatomic, assign) UIMenuSystemElementGroupPreference textFormattingPreference;
+@interface UIWindow()
+- (bool)_windowOwnsInterfaceOrientation;
 @end
 
-API_AVAILABLE(ios(19.0))
-@interface UIMainMenuSystem : UIMenuSystem
-@property (class, nonatomic, readonly) UIMainMenuSystem *sharedSystem;
-- (void)setBuildConfiguration:(UIMainMenuSystemConfiguration *)configuration buildHandler:(void(^)(NSObject<UIMenuBuilder> *builder))buildHandler;
-@end
-
-API_AVAILABLE(ios(19.0))
-@interface NSObject(UIMenuBuilder)
-- (void)insertElements:(NSArray<UIMenuElement *> *)childElements atStartOfMenuForIdentifier:(UIMenuIdentifier)parentIdentifier;
-@end
-
-#endif
-
+static UIInterfaceOrientation CurrentOrientation(void)
+{
+    if (@available(iOS 16.0, *)) {
+        return [(UIWindowScene *)[UIApplication sharedApplication].connectedScenes.anyObject effectiveGeometry].interfaceOrientation;
+    }
+    if (@available(iOS 13.0, *)) {
+        return [(UIWindowScene *)[UIApplication sharedApplication].connectedScenes.anyObject interfaceOrientation];
+    }
+    return [UIApplication sharedApplication].statusBarOrientation;
+}
 
 static UIImage *CreateMenuImage(NSString *name)
 {
@@ -83,6 +64,10 @@ static UIImage *CreateMenuImage(NSString *name)
     }];
     return [image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
 }
+
+API_AVAILABLE(ios(13.0))
+@interface GBSceneDelegate : UIResponder <UIWindowSceneDelegate>
+@end
 
 API_AVAILABLE(ios(13.0))
 @implementation UIKeyCommand (KeyCommandWithImage)
@@ -118,7 +103,6 @@ API_AVAILABLE(ios(13.0))
     GBHorizontalLayout *_horizontalLayoutLeft;
     GBHorizontalLayout *_horizontalLayoutRight;
     GBVerticalLayout *_verticalLayout;
-    GBBackgroundView *_backgroundView;
     
     NSCondition *_audioLock;
     GB_sample_t *_audioBuffer;
@@ -163,6 +147,11 @@ API_AVAILABLE(ios(13.0))
     NSDate *_saveDate;
     
     unsigned _autosaveCountdown;
+
+    API_AVAILABLE(ios(27.1)) UIHingeStatus _lastHingeStatus;
+    
+    @public
+    API_AVAILABLE(ios(27.1)) UIHinge *_hinge;
 }
 
 static void loadBootROM(GB_gameboy_t *gb, GB_boot_rom_t type)
@@ -318,34 +307,55 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     return @[@(factor)];
 }
 
-- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
+- (void)recreateLayoutsWithThemeNamed:(NSString *)name;
 {
-    _window = [[UIWindow alloc] init];
-    _window.rootViewController = self;
-    [_window makeKeyAndVisible];
+    if (@available(iOS 16.0, *)) {
+        if (_hinge) {
+            _lastHingeStatus = _hinge.status;
+            [super setNeedsUpdateOfSupportedInterfaceOrientations];
+        }
+    }
+    GBTheme *theme = [GBSettingsViewController themeNamed:name];
+    _horizontalLayoutLeft = [[GBHorizontalLayout alloc] initWithTheme:theme cutoutOnRight:false];
+    _horizontalLayoutRight = _horizontalLayoutLeft.asymmetric?
+    [[GBHorizontalLayout alloc] initWithTheme:theme cutoutOnRight:true] :
+    _horizontalLayoutLeft;
+    _verticalLayout = [[GBVerticalLayout alloc] initWithTheme:theme];
+    _printerSpinner.color = theme.buttonColor;
     
+    [self willRotateToInterfaceOrientation:CurrentOrientation()
+                                  duration:0];
+    [_backgroundView reloadThemeImages];
+    
+    [self setNeedsStatusBarAppearanceUpdate];
+}
+
+- (bool)setupWindow
+{
     _runQueue = dispatch_queue_create("SameBoy Emulation Queue", NULL);
-    
+ 
+    if (@available(iOS 27.1, *)) {
+        // Hack to prevent start-up flashing on iPhone Duo
+        if (UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
+            if ((_window.bounds.size.width == 951 && _window.bounds.size.height == 669) ||
+                (_window.bounds.size.width == 669 && _window.bounds.size.height == 951)) {
+                _lastHingeStatus = UIHingeStatusFullyOpen;
+            }
+            else if ((_window.bounds.size.width == 678 && _window.bounds.size.height == 466) ||
+                     (_window.bounds.size.width == 466 && _window.bounds.size.height == 678)) {
+                _lastHingeStatus = UIHingeStatusClosed;
+            }
+        }
+    }
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Warc-retain-cycles"
     [self addDefaultObserver:^(id newValue) {
-        GBTheme *theme = [GBSettingsViewController themeNamed:newValue];
-        _horizontalLayoutLeft = [[GBHorizontalLayout alloc] initWithTheme:theme cutoutOnRight:false];
-        _horizontalLayoutRight = _horizontalLayoutLeft.cutout?
-            [[GBHorizontalLayout alloc] initWithTheme:theme cutoutOnRight:true] :
-            _horizontalLayoutLeft;
-        _verticalLayout = [[GBVerticalLayout alloc] initWithTheme:theme];
-        _printerSpinner.color = theme.buttonColor;
-
-        [self willRotateToInterfaceOrientation:[UIApplication sharedApplication].statusBarOrientation
-                                      duration:0];
-        [_backgroundView reloadThemeImages];
-        
-        [self setNeedsStatusBarAppearanceUpdate];
+        [self recreateLayoutsWithThemeNamed:newValue];
     } forKey:@"GBInterfaceTheme"];
 #pragma clang diagnostic pop
     
-    _backgroundView = [[GBBackgroundView alloc] initWithLayout:_verticalLayout];
+    _backgroundView = [[GBBackgroundView alloc] initWithLayout:[self layoutForOrientation:CurrentOrientation()]];
     [_window addSubview:_backgroundView];
     self.view = _backgroundView;
     
@@ -371,7 +381,7 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     } forKey:@"GBSwipeDpad"];
     
     
-    [self willRotateToInterfaceOrientation:[UIApplication sharedApplication].statusBarOrientation
+    [self willRotateToInterfaceOrientation:CurrentOrientation()
                                   duration:0];
     
     
@@ -426,7 +436,7 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     }
 
     _cameraPositionButton = [[UIButton alloc] init];
-    [self didRotateFromInterfaceOrientation:[UIApplication sharedApplication].statusBarOrientation];
+    [self didRotateFromInterfaceOrientation:CurrentOrientation()];
     if (@available(iOS 13.0, *)) {
         [_cameraPositionButton  setImage:[UIImage systemImageNamed:@"camera.rotate"
                                                  withConfiguration:[UIImageSymbolConfiguration configurationWithScale:UIImageSymbolScaleLarge]]
@@ -492,8 +502,8 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     _printerButton = [[UIButton alloc] init];
     _printerSpinner = [[UIActivityIndicatorView alloc] init];
     _printerSpinner.activityIndicatorViewStyle = UIActivityIndicatorViewStyleWhite;
-    _printerSpinner.color = _verticalLayout.theme.buttonColor;
-    [self didRotateFromInterfaceOrientation:[UIApplication sharedApplication].statusBarOrientation];
+    _printerSpinner.color = _backgroundView.layout.theme.buttonColor;
+    [self didRotateFromInterfaceOrientation:CurrentOrientation()];
     
     if (@available(iOS 13.0, *)) {
         [_printerButton  setImage:[UIImage systemImageNamed:@"printer"
@@ -560,7 +570,36 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
         }];
     }
     
+    // Started in windowed/split mode?
+    [self viewWillTransitionToSize:self.window.bounds.size withTransitionCoordinator:nil];
+    
     return true;
+}
+
+- (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions
+{
+    if (@available(iOS 13.0, *)) {
+        return true;
+    }
+    if (!self.window) {
+        self.window = [[UIWindow alloc] init];
+    }
+    self.window.rootViewController = self;
+    [self.window makeKeyAndVisible];
+    return true;
+}
+
+- (UISceneConfiguration *)application:(UIApplication *)application
+            configurationForConnectingSceneSession:(UISceneSession *)connectingSceneSession
+                                           options:(UISceneConnectionOptions *)options API_AVAILABLE(ios(13.0))
+{
+    if (@available(iOS 13.0, *)) {
+        UISceneConfiguration *configuration = [[UISceneConfiguration alloc] initWithName:@"Default Configuration"
+                                                                               sessionRole:connectingSceneSession.role];
+        configuration.delegateClass = [GBSceneDelegate class];
+        return configuration;
+    }
+    return nil;
 }
 
 - (BOOL)canPerformAction:(SEL)action withSender:(id)sender
@@ -638,7 +677,7 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
 
 - (void)controllerDisconnected:(NSNotification *)notification
 {
-    if (notification.object == _lastController) {
+    if (notification.object == _lastController && _backgroundView.fullScreenMode != GBControllerFocusForcedViaSplitView) {
         _backgroundView.fullScreenMode = GBControllerFocusOff;
     }
 }
@@ -687,7 +726,9 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
 {
     [self updateLastController:controller];
     if (_running && button.value > 0.25) {
-        _backgroundView.fullScreenMode = [[NSUserDefaults standardUserDefaults] integerForKey:@"GBControllersHideInterface"];
+        if (_backgroundView.fullScreenMode != GBControllerFocusForcedViaSplitView) {
+            _backgroundView.fullScreenMode = [[NSUserDefaults standardUserDefaults] integerForKey:@"GBControllersHideInterface"];
+        }
     }
     
     GBButton gbButton = [GBSettingsViewController controller:controller convertUsageToButton:usage];
@@ -813,7 +854,7 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     
     if (!hasUnmappedChild) return;
     
-    if (_running && (left || right || up || down)) {
+    if (_running && (left || right || up || down) && _backgroundView.fullScreenMode != GBControllerFocusForcedViaSplitView) {
         _backgroundView.fullScreenMode = [[NSUserDefaults standardUserDefaults] integerForKey:@"GBControllersHideInterface"];
     }
     
@@ -1026,6 +1067,14 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
 
 - (void)applicationDidBecomeActive:(UIApplication *)application
 {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        [self setupWindow];
+    });
+    if (_lastHingeStatus != _hinge.status) {
+        [self recreateLayoutsWithThemeNamed:[[NSUserDefaults standardUserDefaults] stringForKey:@"GBInterfaceTheme"]];
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"HingeStatusChanged" object:nil];
+    }
     [self start];
 }
 
@@ -1206,6 +1255,11 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
 - (void)dismissViewControllerAnimated:(BOOL)flag completion:(void (^)(void))completion
 {
     [super dismissViewControllerAnimated:flag completion:^() {
+        if (@available(iOS 27.1, *)) {
+            if (_lastHingeStatus == UIHingeStatusClosed) {
+                [self setNeedsStatusBarAppearanceUpdate];
+            }
+        }
         if (completion) {
             completion();
         }
@@ -1250,25 +1304,28 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     [self stop];
 }
 
-- (void)willRotateToInterfaceOrientation:(UIInterfaceOrientation)orientation duration:(NSTimeInterval)duration
+- (GBLayout *)layoutForOrientation:(UIInterfaceOrientation)orientation
 {
-    if (_orientation != UIInterfaceOrientationUnknown && !((1 << orientation) & self.supportedInterfaceOrientations)) return;
-    GBLayout *layout = nil;
-    _orientation = orientation;
     switch (orientation) {
         default:
         case UIInterfaceOrientationUnknown:
         case UIInterfaceOrientationPortrait:
         case UIInterfaceOrientationPortraitUpsideDown:
-            layout = _verticalLayout;
-            break;
+            return _verticalLayout;
         case UIInterfaceOrientationLandscapeRight:
-            layout = _horizontalLayoutLeft;
+            return _horizontalLayoutLeft;
             break;
         case UIInterfaceOrientationLandscapeLeft:
-            layout = _horizontalLayoutRight;
-            break;
+            return _horizontalLayoutRight;
     }
+}
+
+- (void)willRotateToInterfaceOrientation:(UIInterfaceOrientation)orientation duration:(NSTimeInterval)duration
+{
+    if (_orientation != UIInterfaceOrientationUnknown && !((1 << orientation) & self.supportedInterfaceOrientations)) return;
+    GBLayout *layout = nil;
+    _orientation = orientation;
+    layout = [self layoutForOrientation:orientation];
     
     _backgroundView.frame = [layout viewRectForOrientation:orientation];
     _backgroundView.layout = layout;
@@ -1317,6 +1374,11 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
     if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad) {
         return UIInterfaceOrientationMaskAll;
     }
+    if (@available(iOS 27.1, *)) {
+        if (_lastHingeStatus >= UIHingeStatusPartiallyOpen) {
+            return UIInterfaceOrientationMaskAll;
+        }
+    }
     if (MAX([UIScreen mainScreen].bounds.size.height, [UIScreen mainScreen].bounds.size.width) <= 568) {
         return UIInterfaceOrientationMaskLandscape;
     }
@@ -1338,6 +1400,16 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
 
 - (BOOL)prefersStatusBarHidden
 {
+    if (@available(iOS 27.1, *)) {
+        switch (_orientation) {
+            case UIInterfaceOrientationLandscapeRight:
+            case UIInterfaceOrientationLandscapeLeft:
+                return _lastHingeStatus == UIHingeStatusPartiallyOpen;
+            default:
+                return _lastHingeStatus >= UIHingeStatusPartiallyOpen;
+        }
+    }
+
     switch (_orientation) {
         case UIInterfaceOrientationLandscapeRight:
         case UIInterfaceOrientationLandscapeLeft:
@@ -1349,10 +1421,18 @@ static void rumbleCallback(GB_gameboy_t *gb, double amp)
 
 - (UIStatusBarStyle)preferredStatusBarStyle
 {
-    if (@available(iOS 13.0, *)) {
-        return (_verticalLayout.theme.isDark || _backgroundView.fullScreenMode)? UIStatusBarStyleLightContent : UIStatusBarStyleDarkContent;
+    /* Working around a UIKit bug */
+    if (@available(iOS 27.1, *)) {
+        if (_lastHingeStatus == UIHingeStatusClosed && self.presentedViewController &&
+            ![self.presentedViewController isKindOfClass:[UIAlertController class]]) {
+            return self.presentedViewController.traitCollection.userInterfaceStyle == UIUserInterfaceStyleDark? UIStatusBarStyleLightContent : UIStatusBarStyleDarkContent;
+        }
     }
-    return (_verticalLayout.theme.isDark || _backgroundView.fullScreenMode)? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
+
+    if (@available(iOS 13.0, *)) {
+        return (_backgroundView.layout.isDark || _backgroundView.fullScreenMode)? UIStatusBarStyleLightContent : UIStatusBarStyleDarkContent;
+    }
+    return (_backgroundView.layout.isDark || _backgroundView.fullScreenMode)? UIStatusBarStyleLightContent : UIStatusBarStyleDefault;
 }
 
 - (void)preRun
@@ -2493,31 +2573,80 @@ didReceiveNotificationResponse:(UNNotificationResponse *)response
     [self dismissViewController];
 }
 
-@end
-
-/* +[UIColor labelColor] is broken in some contexts in iOS 26 and despite being such a critical method
-   Apple isn't going to fix this in time. */
-API_AVAILABLE(ios(19.0))
-@implementation UIColor(SolariumBugs)
-+ (UIColor *)_labelColor
+- (UIHingeStatus)hingeStatus
 {
-    return [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traitCollection) {
-        switch (traitCollection.userInterfaceStyle) {
-                
-            case UIUserInterfaceStyleUnspecified:
-            case UIUserInterfaceStyleLight:
-                return [UIColor blackColor];
-            case UIUserInterfaceStyleDark:
-                return [UIColor whiteColor];
-        }
-    }];
+    return _lastHingeStatus;
 }
 
-+ (void)load
+- (void)viewWillTransitionToSize:(CGSize)size withTransitionCoordinator:(id<UIViewControllerTransitionCoordinator>)coordinator
 {
-    if (@available(iOS 19.0, *)) {
-        method_setImplementation(class_getClassMethod(self, @selector(labelColor)),
-                                 [self methodForSelector:@selector(_labelColor)]);
+    [super viewWillTransitionToSize:size withTransitionCoordinator:coordinator];
+    
+    bool isSplitView = !CGSizeEqualToSize(size, self.window.screen.bounds.size);
+    if (isSplitView) {
+        self.window.bounds = (CGRect){{0, 0}, size};
+        _backgroundView.fullScreenMode = GBControllerFocusForcedViaSplitView;
+        [_backgroundView repositionForcedFullscreen];
+    }
+    else {
+        _backgroundView.fullScreenMode = GBControllerFocusOff;
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self recreateLayoutsWithThemeNamed:[[NSUserDefaults standardUserDefaults] stringForKey:@"GBInterfaceTheme"]];
+        });
+    }
+}
+
+@end
+
+API_AVAILABLE(ios(13.0))
+@implementation GBSceneDelegate
+
+- (void)scene:(UIScene *)scene
+ willConnectToSession:(UISceneSession *)session
+        options:(UISceneConnectionOptions *)connectionOptions
+{
+    GBViewController *controller = (id)[UIApplication sharedApplication].delegate;
+    controller.window = [[UIWindow alloc] initWithWindowScene:(id)scene];
+    
+    if (!controller.window) {
+        controller.window = [[UIWindow alloc] init];
+    }
+    controller.window.rootViewController = controller;
+    [controller.window makeKeyAndVisible];
+    
+    if (@available(iOS 27.1, *)) {
+        [controller.window addInteraction:[[objc_getClass("UIHingeInteraction") alloc] initWithUpdateHandler:^(UIHingeInteraction *interaction, UIHingeInteractionUpdate *update) {
+            controller->_hinge = update.hinge;
+            [controller recreateLayoutsWithThemeNamed:[[NSUserDefaults standardUserDefaults] stringForKey:@"GBInterfaceTheme"]];
+            [[NSNotificationCenter defaultCenter] postNotificationName:@"HingeStatusChanged" object:nil];
+        }]];
+    }
+    
+    for (UIOpenURLContext *context in connectionOptions.URLContexts) {
+        [controller application:[UIApplication sharedApplication]
+                        openURL:context.URL
+                        options:@{UIApplicationOpenURLOptionsOpenInPlaceKey: @(context.options.openInPlace)}];
+    }
+}
+
+- (void)sceneDidBecomeActive:(UIScene *)scene
+{
+    [[UIApplication sharedApplication].delegate applicationDidBecomeActive:[UIApplication sharedApplication]];
+}
+
+- (void)sceneWillResignActive:(UIScene *)scene
+{
+    [[UIApplication sharedApplication].delegate applicationWillResignActive:[UIApplication sharedApplication]];
+}
+
+- (void)scene:(UIScene *)scene openURLContexts:(nonnull NSSet<UIOpenURLContext *> *)URLContexts
+{
+    GBViewController *controller = (id)[UIApplication sharedApplication].delegate;
+    
+    for (UIOpenURLContext *context in URLContexts) {
+        [controller application:[UIApplication sharedApplication]
+                        openURL:context.URL
+                        options:@{UIApplicationOpenURLOptionsOpenInPlaceKey: @(context.options.openInPlace)}];
     }
 }
 

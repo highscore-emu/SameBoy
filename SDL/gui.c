@@ -337,6 +337,9 @@ static void nop(unsigned index){}
 
 static void open_rom(unsigned index)
 {
+#ifdef _WIN32
+    SDL_SetWindowFullscreen(window, 0);
+#endif
     char *filename = do_open_rom_dialog();
     if (filename) {
         set_filename(filename, free);
@@ -346,6 +349,9 @@ static void open_rom(unsigned index)
 
 static void cart_swap(unsigned index)
 {
+#ifdef _WIN32
+    SDL_SetWindowFullscreen(window, 0);
+#endif
     char *filename = do_open_rom_dialog();
     if (filename) {
         set_filename(filename, free);
@@ -1136,6 +1142,9 @@ static void toggle_bootrom(unsigned index)
         configuration.bootrom_path[0] = 0;
     }
     else {
+#ifdef _WIN32
+        SDL_SetWindowFullscreen(window, 0);
+#endif
         char *folder = do_open_folder_dialog();
         if (!folder) return;
         if (strlen(folder) < sizeof(configuration.bootrom_path) - 1) {
@@ -1531,6 +1540,7 @@ struct shader_name {
 } shaders[] =
 {
     {"NearestNeighbor", "Nearest Neighbor"},
+    {"Pixelated", "Pixelated"},
     {"Bilinear", "Bilinear"},
     {"SmoothBilinear", "Smooth Bilinear"},
     {"MonoLCD", "Monochrome LCD"},
@@ -1557,7 +1567,6 @@ static void cycle_filter(unsigned index)
         }
     }
     
-
     i += 1;
     if (i >= sizeof(shaders) / sizeof(shaders[0])) {
         i -= sizeof(shaders) / sizeof(shaders[0]);
@@ -1566,7 +1575,7 @@ static void cycle_filter(unsigned index)
     strcpy(configuration.filter, shaders[i].file_name);
     free_shader(&shader);
     if (!init_shader_with_name(&shader, configuration.filter)) {
-        init_shader_with_name(&shader, "NearestNeighbor");
+        init_shader_with_name(&shader, "Pixelated");
     }
 }
 
@@ -1588,7 +1597,7 @@ static void cycle_filter_backwards(unsigned index)
     strcpy(configuration.filter, shaders[i].file_name);
     free_shader(&shader);
     if (!init_shader_with_name(&shader, configuration.filter)) {
-        init_shader_with_name(&shader, "NearestNeighbor");
+        init_shader_with_name(&shader, "Pixelated");
     }
 
 }
@@ -1603,7 +1612,7 @@ static const char *current_filter_name(unsigned index)
     }
     
     if (i == sizeof(shaders) / sizeof(shaders[0])) {
-        i = 0;
+        i = 1; // Pixelated
     }
     
     return shaders[i].display_name;
@@ -2287,6 +2296,9 @@ static void toggle_audio_recording(unsigned index)
         memcpy(audio_recording_menu_item, item_string, sizeof(item_string));
         return;
     }
+#ifdef _WIN32
+    SDL_SetWindowFullscreen(window, 0);
+#endif
     char *filename = do_save_recording_dialog(GB_get_sample_rate(&gb));
     
     /* Drop events as it SDL seems to catch several in-dialog events */
@@ -2310,6 +2322,9 @@ static void toggle_audio_recording(unsigned index)
                 else if (strcasecmp(".wav", filename + length - 4) == 0) {
                     format = GB_AUDIO_FORMAT_WAV;
                 }
+                else if (strcasecmp(".vgm", filename + length - 4) == 0) {
+                    format = GB_AUDIO_FORMAT_VGM;
+                }
             }
         }
         
@@ -2317,7 +2332,7 @@ static void toggle_audio_recording(unsigned index)
         free(filename);
         if (error) {
             char *message = NULL;
-            asprintf(&message, "Could not finalize recording: %s", strerror(error));
+            asprintf(&message, "Could not start recording: %s", strerror(error));
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Error", message, window);
             free(message);
             return;
@@ -2339,11 +2354,6 @@ void convert_mouse_coordinates(signed *x, signed *y)
 
     *x = (signed)(*x - rect.x / factor) * width / (signed)(rect.w / factor) - x_offset;
     *y = (signed)(*y - rect.y / factor) * height / (signed)(rect.h / factor) - y_offset;
-
-    if (strcmp("CRT", configuration.filter) == 0) {
-        *y = *y * 8 / 7;
-        *y -= 144 / 16;
-    }
 }
 
 void update_swap_interval(void)
@@ -2763,6 +2773,9 @@ void run_gui(bool is_running)
                 }
                 else if (event_hotkey_code(&event) == SDL_SCANCODE_O) {
                     if (event.key.keysym.mod & MODIFIER) {
+#ifdef _WIN32
+                        SDL_SetWindowFullscreen(window, 0);
+#endif
                         char *filename = do_open_rom_dialog();
                         if (filename) {
                             set_filename(filename, free);

@@ -575,6 +575,9 @@ static void handle_events(GB_gameboy_t *gb)
                         
                     case SDL_SCANCODE_O: {
                         if (event.key.keysym.mod & MODIFIER) {
+#ifdef _WIN32
+                            SDL_SetWindowFullscreen(window, 0);
+#endif
                             char *filename = do_open_rom_dialog();
                             if (filename) {
                                 set_filename(filename, free);
@@ -773,7 +776,6 @@ static void vblank(GB_gameboy_t *gb, GB_vblank_type_t type)
         
         if (battery_dirty && !GB_get_battery_dirty(gb)) {
             GB_save_battery(gb, battery_save_path_ptr);
-            GB_log(gb, "Saved\n");
         }
         
         battery_dirty = GB_get_battery_dirty(gb);
@@ -1596,7 +1598,7 @@ int main(int argc, char **argv)
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     
     if (!init_shader_with_name(&shader, configuration.filter)) {
-        init_shader_with_name(&shader, "NearestNeighbor");
+        init_shader_with_name(&shader, "Pixelated");
     }
     update_viewport();
     
