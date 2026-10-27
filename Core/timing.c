@@ -125,10 +125,19 @@ void GB_timing_sync(GB_gameboy_t *gb)
 
 #endif
 
-#define IR_DECAY 31500
-#define IR_WARMUP 19900
-#define IR_THRESHOLD 240
-#define IR_MAX IR_THRESHOLD * 2 + IR_DECAY + 268
+#define IR_DECAY 23000
+#define IR_NOISE 2048
+#define IR_WARMUP 32000
+#define IR_DECAY_MAX (IR_DECAY + IR_NOISE + IR_DECAY)
+#define IR_WARMUP_MAX (IR_WARMUP + IR_NOISE)
+
+static uint16_t ir_noise(GB_gameboy_t *gb)
+{
+    uint16_t noise = (((9 + gb->div_counter) * 127) ^ ((gb->display_cycles) * 137));
+    noise >>= 3;
+    noise %= IR_NOISE;
+    return noise;
+}
 
 static void ir_run(GB_gameboy_t *gb, uint32_t cycles)
 {
@@ -137,28 +146,50 @@ static void ir_run(GB_gameboy_t *gb, uint32_t cycles)
     bool is_sensing = (gb->io_registers[GB_IO_RP] & 0xC0) == 0xC0 ||
                        (gb->cartridge_type->mbc_type == GB_HUC1 && gb->huc1.ir_mode) ||
                        (gb->cartridge_type->mbc_type == GB_HUC3 && gb->huc3.mode == 0xE);
-    if (is_sensing && (gb->infrared_input || gb->cart_ir || (gb->io_registers[GB_IO_RP] & 1))) {
-        gb->ir_sensor += cycles;
-        if (gb->ir_sensor > IR_MAX) {
-            gb->ir_sensor = IR_MAX;
+    
+    bool input = (gb->infrared_input || gb->cart_ir || (gb->io_registers[GB_IO_RP] & 1));
+    if (is_sensing) {
+        gb->ir_warmup += cycles;
+        if (gb->ir_warmup > IR_WARMUP_MAX) {
+            gb->ir_warmup = IR_WARMUP_MAX;
         }
-        
-        gb->effective_ir_input = gb->ir_sensor >=  IR_WARMUP + IR_THRESHOLD && gb->ir_sensor <= IR_WARMUP + IR_THRESHOLD + IR_DECAY;
     }
     else {
-        unsigned target = is_sensing? IR_WARMUP : 0;
-        if (gb->ir_sensor < target) {
-            gb->ir_sensor += cycles;
+        gb->ir_warmup -= cycles;
+        if (gb->ir_warmup < 0) {
+            gb->ir_warmup = 0;
         }
-        else if (gb->ir_sensor <= target + cycles) {
-            gb->ir_sensor = target;
-        }
-        else {
-            gb->ir_sensor -= cycles;
-        }
-        gb->effective_ir_input = false;
+        input = false;
     }
     
+    if (gb->ir_warmup < IR_WARMUP) {
+        input = false; // Not ready to sense yet
+    }
+    else if (gb->ir_warmup != IR_WARMUP_MAX) {
+        input &= ir_noise(gb) < gb->ir_warmup - IR_WARMUP;
+    }
+    
+    if (input) {
+        gb->ir_decay += cycles;
+        if (gb->ir_decay > IR_DECAY_MAX) {
+            gb->ir_decay = IR_DECAY_MAX;
+        }
+    }
+    else {
+        gb->ir_decay -= cycles;
+        if (gb->ir_decay < 0) {
+            gb->ir_decay = 0;
+        }
+    }
+    
+    if (gb->ir_decay >= IR_DECAY && gb->ir_decay < IR_DECAY + IR_NOISE) {
+        input &= ir_noise(gb) > gb->ir_decay - IR_DECAY;
+    }
+    else if (gb->ir_decay >= IR_DECAY + IR_NOISE) {
+        input = false;
+    }
+    
+    gb->effective_ir_input = input;
 }
 
 static void advance_tima_state_machine(GB_gameboy_t *gb)
@@ -181,12 +212,14 @@ static void increase_tima(GB_gameboy_t *gb)
     }
 }
 
-void GB_serial_master_edge(GB_gameboy_t *gb)
+static void printer_run(GB_gameboy_t *gb, uint8_t cycles)
 {
-    if (gb->printer_callback) {
-        unsigned ticks = 1 << gb->serial_mask;
+    if (gb->printer_callback || gb->printer_done_callback || gb->accessory == GB_ACCESSORY_PRINTER) {
+        gb->printer.cycle_counter += cycles;
+        unsigned ticks = gb->printer.cycle_counter / 512;
+        gb->printer.cycle_counter %= 512;
         if (unlikely((gb->printer.command_state || gb->printer.bits_received))) {
-            gb->printer.idle_time +=ticks;
+            gb->printer.idle_time += ticks;
         }
         if (unlikely(gb->printer.time_remaining)) {
             if (gb->printer.time_remaining <= ticks) {
@@ -200,6 +233,10 @@ void GB_serial_master_edge(GB_gameboy_t *gb)
             }
         }
     }
+}
+
+void GB_serial_master_edge(GB_gameboy_t *gb)
+{
     
     gb->serial_master_clock ^= true;
     
@@ -480,6 +517,10 @@ void GB_advance_cycles(GB_gameboy_t *gb, uint8_t cycles)
 
     if (unlikely(!gb->cgb_double_speed)) {
         cycles <<= 1;
+    }
+
+    if (unlikely(gb->printer_callback || gb->printer_done_callback || gb->accessory == GB_ACCESSORY_PRINTER)) {
+        printer_run(gb, cycles);
     }
     
 #ifndef GB_DISABLE_DEBUGGER
