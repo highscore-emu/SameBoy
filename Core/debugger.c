@@ -305,7 +305,7 @@ static void write_lvalue(GB_gameboy_t *gb, lvalue_t lvalue, uint16_t value)
 
 static value_t add(value_t a, value_t b) {return FIX_BANK(a.value + b.value);}
 static value_t sub(value_t a, value_t b) {return FIX_BANK(a.value - b.value);}
-static value_t mul(value_t a, value_t b) {return FIX_BANK(a.value * b.value);}
+static value_t mul(value_t a, value_t b) {return FIX_BANK((uint32_t)a.value * b.value);}
 static value_t _div(value_t a, value_t b) 
 {
     if (b.value == 0) {
@@ -323,8 +323,8 @@ static value_t mod(value_t a, value_t b)
 static value_t and(value_t a, value_t b) {return FIX_BANK(a.value & b.value);}
 static value_t or(value_t a, value_t b) {return FIX_BANK(a.value | b.value);}
 static value_t xor(value_t a, value_t b) {return FIX_BANK(a.value ^ b.value);}
-static value_t shleft(value_t a, value_t b) {return FIX_BANK(a.value << b.value);}
-static value_t shright(value_t a, value_t b) {return FIX_BANK(a.value >> b.value);}
+static value_t shleft(value_t a, value_t b) {return FIX_BANK(b.value >= 16 ? 0 : a.value << b.value);}
+static value_t shright(value_t a, value_t b) {return FIX_BANK(b.value >= 16 ? 0 : a.value >> b.value);}
 static value_t assign(GB_gameboy_t *gb, lvalue_t a, uint16_t b)
 {
     write_lvalue(gb, a, b);
@@ -691,6 +691,11 @@ static value_t debugger_evaluate(GB_gameboy_t *gb, const char *string,
         string++;
         base = 16;
         length--;
+    }
+    else if (string[0] == '0' && (string[1] == 'x' || string[1] == 'X')) {
+        string += 2;
+        base = 16;
+        length -= 2;
     }
     uint16_t literal = (uint16_t) (strtol(string, &end, base));
     if (end != string + length) {
@@ -1544,6 +1549,9 @@ static bool examine(GB_gameboy_t *gb, char *arguments, char *modifiers, const de
             char *end;
             if (modifiers[0] == '$' && modifiers_length > 1) {
                 count = (uint16_t) (strtol(modifiers + 1, &end, 16));
+            }
+            else if (modifiers[0] == '0' && (modifiers[1] == 'x' || modifiers[1] == 'X') && modifiers_length > 2) {
+                count = (uint16_t) (strtol(modifiers + 2, &end, 16));
             }
             else {
                 count = (uint16_t) (strtol(modifiers, &end, 10));
